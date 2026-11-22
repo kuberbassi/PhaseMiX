@@ -45,7 +45,7 @@ export interface MixerState {
 }
 
 export interface DeviceInfo {
-  id: number;
+  id: string | number;
   name: string;
   rate: number;
   channels: number;

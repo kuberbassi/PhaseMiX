@@ -7,7 +7,7 @@
 ![OS](https://img.shields.io/badge/Windows-10%20%2F%2011-0f1014?style=flat-square&logo=windows&logoColor=white)
 ![Engine](https://img.shields.io/badge/Audio-WASAPI%20Loopback%2048kHz-181a20?style=flat-square)
 ![UI](https://img.shields.io/badge/UI-React%2019%20%2B%20Three.js-181a20?style=flat-square&logo=react&logoColor=61DAFB)
-![Status](https://img.shields.io/badge/Roadmap-Rust%20Core%20Next-22c55e?style=flat-square)
+![Core](https://img.shields.io/badge/Core-Rust%20%2B%20Tauri%20v2-22c55e?style=flat-square&logo=rust&logoColor=white)
 
 </div>
 
@@ -38,7 +38,7 @@ flowchart LR
 | **3-Band EQ + Crossover** | Sculpt lows, vocals & highs independently per output | `110 Hz` shelf · `1 kHz` bell · `4.5 kHz` shelf (`±12 dB`), `HPF`/`LPF` |
 | **Ear-Safe Protection** | Prevents sudden system volume blasts or clipping | Master cap (`15–200%`), C¹ soft-knee limiter (`-30` to `-0.5 dB`) |
 | **Position Presets** | Instant stage layouts synced with live 3D room visualizer | `Desk Triangle`, `Cinema 3.2`, `Wide Room`, `Night Safe`, `Offset`, `Flat` |
-| **Windows Integration** | Keyboard Volume/Mute bridge + per-endpoint level sync | `pycaw` `IAudioEndpointVolume` + virtual loopback unity lock |
+| **Windows Integration** | Keyboard Volume/Mute bridge + per-endpoint level sync | Win32 `IAudioEndpointVolume` + virtual loopback unity lock |
 
 ---
 
@@ -57,22 +57,25 @@ flowchart LR
 
 ## Tech Stack
 
-| Layer | Current Stack | Next (`Phase 2`) |
+| Layer | Architecture | Details |
 | :--- | :--- | :--- |
-| **Frontend & 3D** | React 19 · TypeScript · Tailwind v4 · Three.js · Phosphor Icons · Aurora WebGL | Same React/Three.js UI |
-| **Audio Routing** | Python 3.14 · `PyAudioWPatch` WASAPI · `pycaw` | Rust + Tauri v2 (`wasapi` / zero-alloc ring buffers) |
-| **DSP Pipeline** | `NumPy` + `SciPy` SOS filters · C¹ soft-knee `PeakGuard` | Pure Rust inline biquads |
+| **Desktop Shell & IPC** | Rust + Tauri v2 | Zero-HTTP IPC commands, `33 ms` live meter push, system tray, single-instance lock |
+| **Audio Routing** | Native WASAPI (`wasapi` + `windows` crates) | Zero-alloc `SharedRing`, `8 ms` jitter deadband, `±1500 ppm` drift sync, BT auto-reconnect |
+| **DSP Pipeline** | Pure Rust (`src-tauri/src/dsp.rs`) | Direct Form II transposed biquads, M/S width, C¹ soft-knee `PeakGuard` |
+| **Frontend & 3D** | React 19 · TypeScript · Tailwind v4 · Three.js | Phosphor Icons, WebGL Aurora, 3D stage orbit view |
 
 ---
 
 ## Windows Installer & Desktop App
 
-Run `PhaseMiX-Setup.exe` for a standalone Edge WebView2 window with system tray playback, single-instance focus, and settings stored cleanly in `%APPDATA%\PhaseMiX\config.json`.
+Run `PhaseMiX-Setup.exe` (NSIS, current-user install) for a standalone Edge WebView2 window with native tray controls, single-instance focus restore, and config stored in `%APPDATA%\PhaseMiX\config.json`.
 
-To build the `.exe` installer from source (requires Inno Setup 6):
+To build the `.exe` installer from source:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File installer\build_installer.ps1
+cd frontend
+npm install && npm run build
+npx tauri build --bundles nsis
 ```
 
 ---
@@ -80,12 +83,6 @@ powershell -ExecutionPolicy Bypass -File installer\build_installer.ps1
 ## Quick Start (Dev Mode)
 
 ```powershell
-# 1. Build frontend UI
-cd frontend && npm install && npm run build && cd ..
-
-# 2. Install Python dependencies & launch mixer
-pip install -r requirements.txt
-python app.py
+cd frontend && npm install
+npx tauri dev
 ```
-
-Open `http://127.0.0.1:5055` (or use `start_mixer.bat`).

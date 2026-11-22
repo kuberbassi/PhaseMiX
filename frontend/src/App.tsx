@@ -35,7 +35,7 @@ import { SpeakerRow } from "@/components/SpeakerRow";
 import SplitFlapText from "@/components/SplitFlapText";
 import SquishSwitch from "@/components/SquishSwitch";
 import WarmTooltip, { WarmTooltipGroup } from "@/components/WarmTooltip";
-import { mixerApi } from "@/lib/api";
+import { IS_TAURI, mixerApi, subscribeMetersEvent, type FastMetersResponse } from "@/lib/api";
 import { telemetryStore } from "@/lib/telemetryStore";
 import {
   POSITION_PRESETS,
@@ -144,6 +144,7 @@ export function App() {
   const lastWinSentRef = useRef<number>(0);
 
   const lastLocalEditRef = useRef<number>(0);
+  const lastWinEditRef = useRef<number>(0);
   const failCountRef = useRef<number>(0);
 
   const applyFullPayload = useCallback((res: StatusPayload, forceMixer = false) => {
@@ -151,15 +152,22 @@ export function App() {
     setOffline((prev) => (prev ? false : prev));
     setRunning(Boolean(res.running));
     if (res.selected) setSelected(res.selected);
-    if (res.win_vols) setWinVols(res.win_vols);
+    if (res.win_vols && (forceMixer || Date.now() - lastWinEditRef.current > 650)) {
+      setWinVols(res.win_vols);
+    }
     telemetryStore.publish({
       running: Boolean(res.running),
       meters: res.meters,
       telemetry: res.telemetry,
-      master_vol: res.mixer?.master_vol ?? 23,
+      master_vol: res.mixer?.master_vol ?? 25,
       master_mute: Boolean(res.mixer?.master_mute),
     });
-    if (res.mixer && (forceMixer || Date.now() - lastLocalEditRef.current > 450)) {
+    if (
+      res.mixer &&
+      (forceMixer ||
+        (Object.keys(pendingPatchRef.current).length === 0 &&
+          Date.now() - lastLocalEditRef.current > 1200))
+    ) {
       setMixer((prev) => ({ ...prev, ...res.mixer }));
     }
   }, []);
@@ -213,12 +221,16 @@ export function App() {
       const batch = pendingPatchRef.current;
       if (Object.keys(batch).length > 0) {
         pendingPatchRef.current = {};
-        void fetch("/api/mixer", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(batch),
-          keepalive: true,
-        }).catch(() => {});
+        if (IS_TAURI) {
+          void mixerApi.updateMixer(batch).catch(() => {});
+        } else {
+          void fetch("/api/mixer", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(batch),
+            keepalive: true,
+          }).catch(() => {});
+        }
       }
     };
     window.addEventListener("pagehide", flushOnHide);
@@ -231,31 +243,66 @@ export function App() {
 
   useEffect(() => {
     let alive = true;
-    const pollMs = perfMode === "eco" ? 100 : perfMode === "studio" ? 28 : 40;
+    let ecoSkip = 0;
 
+    const handleMeters = (res: FastMetersResponse) => {
+      if (!alive || document.hidden) return;
+      if (perfMode === "eco") {
+        ecoSkip = (ecoSkip + 1) % 3;
+        if (ecoSkip !== 0) return;
+      }
+      failCountRef.current = 0;
+      setOffline((prev) => (prev ? false : prev));
+      telemetryStore.publish({
+        running: res.running,
+        meters: res.meters,
+        telemetry: res.telemetry,
+        master_vol: res.master_vol,
+        master_mute: res.master_mute,
+      });
+      setRunning((prev) => (prev === res.running ? prev : res.running));
+      if (
+        Object.keys(pendingPatchRef.current).length === 0 &&
+        Date.now() - lastLocalEditRef.current > 1200
+      ) {
+        setMixer((prev) => {
+          if (prev.master_vol === res.master_vol && prev.master_mute === res.master_mute) {
+            return prev;
+          }
+          return { ...prev, master_vol: res.master_vol, master_mute: res.master_mute };
+        });
+      }
+    };
+
+    if (IS_TAURI) {
+      let unlisten: (() => void) | null = null;
+      void subscribeMetersEvent(handleMeters).then((fn) => {
+        if (alive) {
+          unlisten = fn;
+        } else {
+          fn();
+        }
+      });
+      const onVis = () => {
+        if (!document.hidden && alive) {
+          void mixerApi.getMeters().then(handleMeters).catch(() => {});
+        }
+      };
+      document.addEventListener("visibilitychange", onVis);
+      return () => {
+        alive = false;
+        document.removeEventListener("visibilitychange", onVis);
+        unlisten?.();
+      };
+    }
+
+    const pollMs = perfMode === "eco" ? 100 : perfMode === "studio" ? 28 : 40;
     const tick = async () => {
       if (document.hidden || !alive) return;
       try {
         const res = await mixerApi.getMeters();
         if (!alive) return;
-        failCountRef.current = 0;
-        setOffline((prev) => (prev ? false : prev));
-        telemetryStore.publish({
-          running: res.running,
-          meters: res.meters,
-          telemetry: res.telemetry,
-          master_vol: res.master_vol,
-          master_mute: res.master_mute,
-        });
-        setRunning((prev) => (prev === res.running ? prev : res.running));
-        if (Date.now() - lastLocalEditRef.current > 500) {
-          setMixer((prev) => {
-            if (prev.master_vol === res.master_vol && prev.master_mute === res.master_mute) {
-              return prev;
-            }
-            return { ...prev, master_vol: res.master_vol, master_mute: res.master_mute };
-          });
-        }
+        handleMeters(res);
       } catch {
         if (!alive) return;
         failCountRef.current += 1;
@@ -326,6 +373,7 @@ export function App() {
 
   const handleSetWinVol = useCallback(
     (role: Role, pct: number) => {
+      lastWinEditRef.current = Date.now();
       setWinVols((prev) => {
         const cur = prev[role];
         return cur ? { ...prev, [role]: { ...cur, volume_pct: pct, mute: false } } : prev;

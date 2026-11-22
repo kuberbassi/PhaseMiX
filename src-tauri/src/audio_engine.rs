@@ -852,7 +852,16 @@ impl AudioRouterEngine {
         });
 
         Self::load_config(&inner);
-        Self::refresh_device_selection_inner(&inner, false);
+        // Isolate WASAPI MTA COM initialization off the caller/main UI thread (tao needs STA/OleInitialize)
+        let init_inner = inner.clone();
+        if let Ok(h) = thread::Builder::new()
+            .name("wasapi-init".to_string())
+            .spawn(move || {
+                Self::refresh_device_selection_inner(&init_inner, false);
+            })
+        {
+            let _ = h.join();
+        }
 
         // Single background debounced config writer thread (never spawns per drag!)
         let saver_inner = inner.clone();
@@ -1853,11 +1862,14 @@ mod tests {
 
         let eng = AudioRouterEngine::new(cfg.clone());
         eng.start();
-        thread::sleep(Duration::from_millis(300));
+        thread::sleep(Duration::from_millis(800));
         assert!(eng.is_running());
         let st = eng.status_payload();
+        let (_, outs, _) = list_wasapi_devices();
         println!(
-            "WASAPI_LIVE input={:?} intex={:?} boat={:?} laptop={:?}",
+            "OUTS={:?} SELECTED={:?} STATUS=({:?}, {:?}, {:?}, {:?})",
+            outs.iter().map(|d| d.name.as_str()).collect::<Vec<_>>(),
+            st.selected_names,
             st.telemetry.input_status,
             st.telemetry.intex_status,
             st.telemetry.boat_status,

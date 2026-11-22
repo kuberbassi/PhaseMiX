@@ -1,3 +1,5 @@
+import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import type { DevicesResponse, Meters, MixerState, Role, StatusPayload, Telemetry } from "@/types/mixer";
 
 export interface FastMetersResponse {
@@ -7,6 +9,9 @@ export interface FastMetersResponse {
   master_vol: number;
   master_mute: boolean;
 }
+
+export const IS_TAURI =
+  typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
 async function req<T>(url: string, method = "GET", body?: unknown): Promise<T> {
   const res = await fetch(url, {
@@ -21,15 +26,39 @@ async function req<T>(url: string, method = "GET", body?: unknown): Promise<T> {
 }
 
 export const mixerApi = {
-  getDevices: () => req<DevicesResponse>("/api/devices"),
+  getDevices: () =>
+    IS_TAURI ? invoke<DevicesResponse>("get_devices") : req<DevicesResponse>("/api/devices"),
   setDevices: (payload: { input_id: string; intex_id: string; boat_id: string; laptop_id: string }) =>
-    req<StatusPayload>("/api/devices", "POST", payload),
-  getState: () => req<StatusPayload>("/api/state"),
-  getMeters: () => req<FastMetersResponse>("/api/meters"),
-  updateMixer: (patch: Partial<MixerState>) => req<{ ok: boolean; mixer: MixerState }>("/api/mixer", "POST", patch),
-  startEngine: () => req<StatusPayload>("/api/start", "POST", {}),
-  stopEngine: () => req<StatusPayload>("/api/stop", "POST", {}),
-  boostCapture: () => req<StatusPayload>("/api/boost_capture", "POST", {}),
-  setWinVol: (role: Role, volume_pct: number) => req<StatusPayload>("/api/set_win_vol", "POST", { role, volume_pct }),
-  openSoundSettings: () => req<{ ok: boolean }>("/api/open_sound_settings", "POST", {}),
+    IS_TAURI
+      ? invoke<StatusPayload>("set_devices", { selected: payload })
+      : req<StatusPayload>("/api/devices", "POST", payload),
+  getState: () =>
+    IS_TAURI ? invoke<StatusPayload>("get_state") : req<StatusPayload>("/api/state"),
+  getMeters: () =>
+    IS_TAURI ? invoke<FastMetersResponse>("get_meters") : req<FastMetersResponse>("/api/meters"),
+  updateMixer: (patch: Partial<MixerState>) =>
+    IS_TAURI
+      ? invoke<{ ok: boolean; mixer: MixerState }>("update_mixer", { patch })
+      : req<{ ok: boolean; mixer: MixerState }>("/api/mixer", "POST", patch),
+  startEngine: () =>
+    IS_TAURI ? invoke<StatusPayload>("start_engine") : req<StatusPayload>("/api/start", "POST", {}),
+  stopEngine: () =>
+    IS_TAURI ? invoke<StatusPayload>("stop_engine") : req<StatusPayload>("/api/stop", "POST", {}),
+  boostCapture: () =>
+    IS_TAURI ? invoke<StatusPayload>("boost_capture") : req<StatusPayload>("/api/boost_capture", "POST", {}),
+  setWinVol: (role: Role, volume_pct: number) =>
+    IS_TAURI
+      ? invoke<StatusPayload>("set_win_vol", { role, volume_pct })
+      : req<StatusPayload>("/api/set_win_vol", "POST", { role, volume_pct }),
+  openSoundSettings: () =>
+    IS_TAURI ? invoke<{ ok: boolean }>("open_sound_settings") : req<{ ok: boolean }>("/api/open_sound_settings", "POST", {}),
 };
+
+export async function subscribeMetersEvent(
+  onData: (ev: FastMetersResponse) => void
+): Promise<() => void> {
+  if (!IS_TAURI) return () => {};
+  return await listen<FastMetersResponse>("phasemix:meters", (event) => {
+    onData(event.payload);
+  });
+}
