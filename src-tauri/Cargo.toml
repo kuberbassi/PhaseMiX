@@ -1,0 +1,32 @@
+[package]
+name = "phasemix"
+version = "3.2.0"
+description = "PhaseMiX multi-output Windows WASAPI router & studio console"
+authors = ["kuberbassi"]
+edition = "2024"
+
+[lib]
+name = "phasemix_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+wasapi = "0.27"
+parking_lot = "0.13"
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_Media_Audio",
+    "Win32_Media_Audio_Endpoints",
+    "Win32_System_Com",
+] }
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+opt-level = 3
