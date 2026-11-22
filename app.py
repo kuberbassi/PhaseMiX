@@ -27,10 +27,11 @@ from audio_engine import (
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 RESOURCE_DIR = getattr(sys, "_MEIPASS", BASE_DIR)
 FRONTEND_DIST_DIR = os.path.join(RESOURCE_DIR, "frontend", "dist")
+IS_PACKAGED = getattr(sys, "frozen", False) or os.environ.get("PHASEMIX_PACKAGED") == "1"
 
 if os.environ.get("PHASEMIX_CONFIG"):
     CONFIG_PATH = os.environ["PHASEMIX_CONFIG"]
-elif getattr(sys, "frozen", False):
+elif IS_PACKAGED:
     CONFIG_PATH = os.path.join(
         os.environ.get("APPDATA") or os.path.expanduser("~"),
         "PhaseMiX",

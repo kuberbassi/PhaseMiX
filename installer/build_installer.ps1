@@ -16,24 +16,28 @@ if (-not $Iscc) {
 }
 if (-not $Iscc) { throw "Inno Setup 6 ISCC.exe not found" }
 
-Write-Host "[1/5] Generating icon..."
+Write-Host "[1/6] Generating icon..."
 & $Py (Join-Path $PSScriptRoot "make_icon.py")
 if ($LASTEXITCODE -ne 0) { throw "Icon generation failed" }
 
-Write-Host "[2/5] Building React frontend..."
+Write-Host "[2/6] Building React frontend..."
 Push-Location (Join-Path $Root "frontend")
 npm run build
 if ($LASTEXITCODE -ne 0) { throw "Frontend build failed" }
 Pop-Location
 
-Write-Host "[3/5] Freezing desktop executable with PyInstaller..."
-Push-Location $Root
-if (Test-Path "build") { Remove-Item -Recurse -Force "build" }
-if (Test-Path "dist\PhaseMiX") { Remove-Item -Recurse -Force "dist\PhaseMiX" }
-& $Py -m PyInstaller --noconfirm --clean (Join-Path $PSScriptRoot "PhaseMiX.spec")
-if ($LASTEXITCODE -ne 0) { throw "PyInstaller build failed" }
+Write-Host "[3/6] Compiling native Rust launcher (PhaseMiX.exe)..."
+Push-Location (Join-Path $Root "src-launcher")
+cargo build --release
+if ($LASTEXITCODE -ne 0) { throw "Rust launcher build failed" }
+Pop-Location
 
-Write-Host "[4/5] Running frozen exe smoke test..."
+Write-Host "[4/6] Staging self-contained portable Python runtime..."
+Push-Location $Root
+& $Py (Join-Path $PSScriptRoot "stage_runtime.py")
+if ($LASTEXITCODE -ne 0) { throw "Runtime staging failed" }
+
+Write-Host "[5/6] Running packaged exe WebView2 + audio smoke test..."
 $TempCfgDir = Join-Path ([System.IO.Path]::GetTempPath()) ("phasemix_smoke_" + [guid]::NewGuid().ToString("N"))
 New-Item -ItemType Directory -Force -Path $TempCfgDir | Out-Null
 $TempCfg = Join-Path $TempCfgDir "config.json"
@@ -42,6 +46,7 @@ $SmokeLog = Join-Path $TempCfgDir "smoke.log"
 $env:PHASEMIX_CONFIG = $TempCfg
 $env:PHASEMIX_SMOKE_LOG = $SmokeLog
 $env:MIXER_PORT = "5099"
+
 $psi = New-Object System.Diagnostics.ProcessStartInfo
 $psi.FileName = Join-Path $Root "dist\PhaseMiX\PhaseMiX.exe"
 $psi.Arguments = "--smoke-test --smoke-gui"
@@ -50,7 +55,7 @@ $proc = [System.Diagnostics.Process]::Start($psi)
 $finished = $proc.WaitForExit(45000)
 if (-not $finished) {
     try { $proc.Kill() } catch {}
-    throw "Frozen exe smoke test timed out after 45s"
+    throw "Packaged exe smoke test timed out after 45s"
 }
 $exitCode = $proc.ExitCode
 $smokeOut = if (Test-Path $SmokeLog) { (Get-Content $SmokeLog -Raw).Trim() } else { "" }
@@ -60,10 +65,10 @@ Remove-Item Env:MIXER_PORT -ErrorAction SilentlyContinue
 Remove-Item -Recurse -Force $TempCfgDir -ErrorAction SilentlyContinue
 Write-Host "Smoke result ($exitCode): $smokeOut"
 if ($exitCode -ne 0 -or $smokeOut -notmatch "PHASEMIX_EXE_SMOKE_PASS") {
-    throw "Frozen exe smoke test failed ($exitCode)"
+    throw "Packaged exe smoke test failed ($exitCode)"
 }
 
-Write-Host "[5/5] Compiling Windows installer with Inno Setup ($Iscc)..."
+Write-Host "[6/6] Compiling Windows installer with Inno Setup ($Iscc)..."
 & $Iscc (Join-Path $PSScriptRoot "PhaseMiX.iss")
 if ($LASTEXITCODE -ne 0) { throw "Inno Setup compile failed" }
 

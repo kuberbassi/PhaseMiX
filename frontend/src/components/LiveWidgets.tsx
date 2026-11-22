@@ -1,5 +1,5 @@
 import { memo } from "react";
-import { ShieldCheck, ShieldWarning, SpeakerHigh } from "@phosphor-icons/react";
+import { ShieldCheck, ShieldWarning, SpeakerHigh, SpeakerSlash } from "@phosphor-icons/react";
 import { LedMeter } from "@/components/LedMeter";
 import Orb from "@/components/Orb";
 import { useTelemetrySlice } from "@/lib/telemetryStore";
@@ -9,11 +9,15 @@ export const LiveLedMeter = memo(function LiveLedMeter({
   channel,
   muted = false,
 }: {
-  channel: "in" | Role;
+  channel: "in" | "master" | Role;
   muted?: boolean;
 }) {
-  const db = useTelemetrySlice((s) => s.meters[`${channel}_db`]);
-  return <LedMeter db={db} muted={muted} segments={6} />;
+  const db = useTelemetrySlice((s) =>
+    channel === "master"
+      ? Math.max(s.meters.intex_db, s.meters.boat_db, s.meters.laptop_db)
+      : s.meters[`${channel}_db`]
+  );
+  return <LedMeter db={db} muted={muted} segments={10} />;
 });
 
 export const LiveActualMs = memo(function LiveActualMs({ role }: { role: Role }) {
@@ -27,25 +31,48 @@ export const LiveGuardBadge = memo(function LiveGuardBadge({ role }: { role: Rol
   return <span className="ml-1.5 text-[11px] text-amber-300">• Guard {gr.toFixed(1)} dB</span>;
 });
 
-export const LiveOrbBadge = memo(function LiveOrbBadge({ gpuEnabled }: { gpuEnabled: boolean }) {
+export const LiveOrbBadge = memo(function LiveOrbBadge({
+  gpuEnabled,
+  muted = false,
+  onToggleMute,
+}: {
+  gpuEnabled: boolean;
+  muted?: boolean;
+  onToggleMute?: () => void;
+}) {
   // Quantize energy to 16 discrete steps so silence or tiny ripples never wake Orb WebGL uniforms unnecessarily
   const quantizedEnergy = useTelemetrySlice((s) => {
-    const db = s.meters.in_db;
+    if (muted) return 0;
+    const db = Math.max(s.meters.intex_db, s.meters.boat_db, s.meters.laptop_db);
     if (db <= -55) return 0;
     const norm = Math.max(0, Math.min(1, (db + 55) / 48));
     return Math.round(norm * 16) / 16;
   });
 
-  if (!gpuEnabled) {
+  if (!gpuEnabled || muted) {
     return (
-      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white/[0.07] text-zinc-200">
-        <SpeakerHigh size={17} />
-      </div>
+      <button
+        type="button"
+        onClick={onToggleMute}
+        aria-label={muted ? "Unmute Master Output" : "Mute Master Output"}
+        className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg transition ${
+          muted
+            ? "bg-red-500/20 text-red-300 ring-1 ring-red-500/40 hover:bg-red-500/30"
+            : "bg-white/[0.07] text-zinc-200 hover:bg-white/[0.12]"
+        }`}
+      >
+        {muted ? <SpeakerSlash size={17} /> : <SpeakerHigh size={17} />}
+      </button>
     );
   }
 
   return (
-    <div className="relative h-8 w-8 shrink-0 overflow-hidden rounded-full border border-white/10 bg-[#141519]">
+    <button
+      type="button"
+      onClick={onToggleMute}
+      aria-label="Mute Master Output"
+      className="relative h-8 w-8 shrink-0 overflow-hidden rounded-full border border-white/10 bg-[#141519] transition hover:border-white/25"
+    >
       <Orb
         colors={["#e4e4e7", "#71717a", "#27272a"]}
         wobble={0.1 + quantizedEnergy * 0.4}
@@ -56,7 +83,7 @@ export const LiveOrbBadge = memo(function LiveOrbBadge({ gpuEnabled }: { gpuEnab
         rotateOnHover={false}
         hoverIntensity={0}
       />
-    </div>
+    </button>
   );
 });
 

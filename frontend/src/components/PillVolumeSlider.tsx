@@ -9,6 +9,8 @@ interface PillVolumeSliderProps {
   disabled?: boolean;
   ariaLabel?: string;
   onChange: (value: number) => void;
+  onToggleMute?: () => void;
+  onUnmute?: () => void;
 }
 
 export const PillVolumeSlider = memo(function PillVolumeSlider({
@@ -19,6 +21,8 @@ export const PillVolumeSlider = memo(function PillVolumeSlider({
   disabled = false,
   ariaLabel = "Volume",
   onChange,
+  onToggleMute,
+  onUnmute,
 }: PillVolumeSliderProps) {
   const trackRef = useRef<HTMLDivElement>(null);
   const draggingRef = useRef(false);
@@ -41,6 +45,7 @@ export const PillVolumeSlider = memo(function PillVolumeSlider({
     e.currentTarget.setPointerCapture(e.pointerId);
     draggingRef.current = true;
     setDragging(true);
+    if (muted && onUnmute) onUnmute();
     updateFromClientX(e.clientX);
   };
 
@@ -90,7 +95,7 @@ export const PillVolumeSlider = memo(function PillVolumeSlider({
     >
       <div
         className={`relative flex h-full items-center justify-end rounded-full will-change-[width] ${
-          dragging ? "" : "transition-[width] duration-75"
+          dragging ? "" : "transition-[width] duration-150 ease-out"
         } ${muted ? "bg-zinc-600/75" : "bg-[#f4f5f7] shadow-[0_1px_6px_rgba(0,0,0,0.45)]"}`}
         style={{ width: `calc(32px + (100% - 32px) * ${effectiveRatio.toFixed(4)})` }}
       >
@@ -100,13 +105,31 @@ export const PillVolumeSlider = memo(function PillVolumeSlider({
         />
       </div>
 
-      <span
-        className={`pointer-events-none absolute top-1/2 left-[9px] -translate-y-1/2 ${
-          muted ? "text-zinc-200" : "text-zinc-900"
-        }`}
-      >
-        {muted || clamped === 0 ? <SpeakerSlash size={14} weight="fill" /> : <SpeakerHigh size={14} weight="fill" />}
-      </span>
+      {onToggleMute && !disabled ? (
+        <button
+          type="button"
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleMute();
+          }}
+          aria-label={muted ? `Unmute ${ariaLabel}` : `Mute ${ariaLabel}`}
+          title={muted ? "Click to unmute (restores level)" : "Click to mute"}
+          className={`absolute top-1/2 left-[4px] z-10 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-full transition ${
+            muted ? "text-zinc-100 hover:bg-white/15" : "text-zinc-900 hover:bg-black/10"
+          }`}
+        >
+          {muted || clamped === 0 ? <SpeakerSlash size={14} weight="fill" /> : <SpeakerHigh size={14} weight="fill" />}
+        </button>
+      ) : (
+        <span
+          className={`pointer-events-none absolute top-1/2 left-[9px] -translate-y-1/2 ${
+            muted ? "text-zinc-200" : "text-zinc-900"
+          }`}
+        >
+          {muted || clamped === 0 ? <SpeakerSlash size={14} weight="fill" /> : <SpeakerHigh size={14} weight="fill" />}
+        </span>
+      )}
     </div>
   );
 });

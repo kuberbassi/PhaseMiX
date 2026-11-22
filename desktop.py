@@ -113,6 +113,9 @@ def _run_smoke_test(port: int, server, ico: str | None) -> int:
                         time.sleep(0.2)
                     if not result["ok"]:
                         result["err"] = "React root did not render PhaseMiX h1 before timeout"
+                    else:
+                        # Brief settle before closing WebView2 to avoid WinForms/GPU shutdown race
+                        time.sleep(0.15)
                 finally:
                     try:
                         win.destroy()
@@ -137,8 +140,19 @@ def _run_smoke_test(port: int, server, ico: str | None) -> int:
         print(err_msg)
         return 1
     finally:
-        engine.stop()
-        server.close()
+        try:
+            engine.stop()
+        except Exception:
+            pass
+        try:
+            server.close()
+        except Exception:
+            pass
+        try:
+            sys.stdout.flush()
+            sys.stderr.flush()
+        except Exception:
+            pass
 
 
 def main() -> int:
@@ -157,7 +171,8 @@ def main() -> int:
     # Pre-warm pycaw COM volume cache off the HTTP thread so first /api/state returns immediately
     threading.Thread(target=lambda: _get_cached_win_vols(force=True), name="winvol-warmup", daemon=True).start()
     if smoke:
-        return _run_smoke_test(port, server, ico)
+        code = _run_smoke_test(port, server, ico)
+        os._exit(code)
 
     state = {"quitting": False, "window": None, "tray": None}
 
@@ -237,8 +252,11 @@ def main() -> int:
             except Exception:
                 pass
         engine.stop()
-        server.close()
-    return 0
+        try:
+            server.close()
+        except Exception:
+            pass
+    os._exit(0)
 
 
 if __name__ == "__main__":

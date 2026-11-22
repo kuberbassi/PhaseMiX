@@ -53,12 +53,12 @@ const SystemProtectionDrawer = lazy(() => import("@/components/SystemProtectionD
 type PerfMode = "eco" | "balanced" | "studio";
 
 const INITIAL_MIXER: MixerState = {
-  master_vol: 23,
+  master_vol: 25,
   master_mute: false,
   protection_enabled: true,
-  protection_max_master: 50,
-  protection_ceiling_db: -9,
-  position_preset: "custom",
+  protection_max_master: 60,
+  protection_ceiling_db: -15,
+  position_preset: "desk_triangle",
   intex_vol: 100,
   intex_mute: false,
   intex_delay_ms: 222,
@@ -231,7 +231,7 @@ export function App() {
 
   useEffect(() => {
     let alive = true;
-    const pollMs = perfMode === "eco" ? 200 : 110;
+    const pollMs = perfMode === "eco" ? 100 : perfMode === "studio" ? 28 : 40;
 
     const tick = async () => {
       if (document.hidden || !alive) return;
@@ -460,13 +460,13 @@ export function App() {
 
   return (
     <WarmTooltipGroup delay={260} warmWindow={450}>
-      <div className="relative min-h-screen bg-[#0f1014] text-zinc-100">
-        {/* Full-Width Studio Container */}
+      <div className="relative flex min-h-screen items-center justify-center bg-[#0f1014] px-4 py-4 text-zinc-100 sm:px-6 lg:px-8">
+        {/* Centered Full-Width Studio Container */}
         <motion.div
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
-          className="relative z-10 mx-auto w-full max-w-[1720px] px-4 py-4 sm:px-6 lg:px-8"
+          className="relative z-10 w-full max-w-[1720px]"
         >
           <div className="relative overflow-visible rounded-3xl border border-white/[0.07] bg-[#16171b]/95 p-5 shadow-[0_28px_80px_rgba(0,0,0,0.72)] sm:p-6">
             {/* Top Smoked Aurora Wave */}
@@ -676,7 +676,21 @@ export function App() {
                     <div className="relative z-30 rounded-2xl border border-white/[0.06] bg-[#1c1e24]">
                       <div className="flex flex-wrap items-center gap-3 px-4 py-2.5 sm:flex-nowrap">
                         <div className="flex min-w-[145px] items-center gap-2.5">
-                          <LiveOrbBadge gpuEnabled={perfMode !== "eco"} />
+                          <WarmTooltip
+                            content={mixer.master_mute ? "Unmute Master Output" : "Mute Master Output"}
+                            side="right"
+                            surfaceColor="#242730"
+                            inkColor="#f4f5f7"
+                            size="sm"
+                          >
+                            <div className="inline-flex shrink-0">
+                              <LiveOrbBadge
+                                gpuEnabled={perfMode !== "eco"}
+                                muted={mixer.master_mute}
+                                onToggleMute={() => patchMixer({ master_mute: !mixer.master_mute })}
+                              />
+                            </div>
+                          </WarmTooltip>
                           <div>
                             <div className="text-[13.5px] font-medium text-zinc-100">Output</div>
                             <div className="text-[11px] text-zinc-500">Master Bus</div>
@@ -691,6 +705,8 @@ export function App() {
                             muted={mixer.master_mute}
                             ariaLabel="Master Output Volume"
                             onChange={(v) => patchMixer({ master_vol: v })}
+                            onToggleMute={() => patchMixer({ master_mute: !mixer.master_mute })}
+                            onUnmute={() => patchMixer({ master_mute: false })}
                           />
                         </div>
 
@@ -698,7 +714,7 @@ export function App() {
                           <span className="w-10 text-right font-mono text-xs text-zinc-400 tabular-nums">
                             {effectiveMaster}%
                           </span>
-                          <LiveLedMeter channel="in" muted={mixer.master_mute} />
+                          <LiveLedMeter channel="master" muted={mixer.master_mute} />
                         </div>
 
                         <div className="w-full sm:w-[215px]">

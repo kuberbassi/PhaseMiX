@@ -19,7 +19,8 @@ frontend/node_modules/
 frontend/dist/
 npm-debug.log*
 
-# Rust / Tauri (upcoming)
+# Rust / Tauri
+src-launcher/target/
 src-tauri/target/
 
 # OS / Editor

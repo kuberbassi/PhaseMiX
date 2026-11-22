@@ -90,12 +90,12 @@ DEFAULT_MIXER = {
     "master_vol": 25.0,
     "master_mute": False,
     "protection_enabled": True,
-    "protection_max_master": 50.0,
-    "protection_ceiling_db": -9.0,
-    "position_preset": "custom",
+    "protection_max_master": 60.0,
+    "protection_ceiling_db": -15.0,
+    "position_preset": "desk_triangle",
     "intex_vol": 100.0,
     "intex_mute": False,
-    "intex_delay_ms": 180.0,
+    "intex_delay_ms": 222.0,
     "intex_balance": 0.0,
     "intex_bass_db": 0.0,
     "intex_mid_db": 0.0,
@@ -113,7 +113,7 @@ DEFAULT_MIXER = {
     "boat_invert": False,
     "laptop_vol": 75.0,
     "laptop_mute": False,
-    "laptop_delay_ms": 180.0,
+    "laptop_delay_ms": 222.0,
     "laptop_mode": "stereo",
     "laptop_hpf_hz": 250.0,
     "laptop_lpf_hz": 18000.0,
@@ -416,7 +416,7 @@ class AudioRouterEngine:
         except Exception:
             pass
 
-    def schedule_save(self, delay: float = 0.45) -> None:
+    def schedule_save(self, delay: float = 0.85) -> None:
         """Debounce disk writes during continuous slider drags."""
         with self._lock:
             if self._save_timer is not None:
@@ -787,6 +787,7 @@ class AudioRouterEngine:
                 with self._ring_lock:
                     w0 = self.write_idx
                 delay_ms = float(self.mixer.get(f"{role}_delay_ms", 0.0))
+                prev_delay_ms = delay_ms
                 target_lag = (BASE_BUFFER_MS + delay_ms) * MASTER_RATE / 1000.0
                 read_pos = float(max(0.0, w0 - target_lag))
                 smoothed_diff = 0.0
@@ -803,19 +804,21 @@ class AudioRouterEngine:
                     desired_pos = w - target_lag
                     diff = desired_pos - read_pos
 
-                    # Snap gently on huge jump (> 450 ms) such as stream startup/resume
-                    if abs(diff) > MASTER_RATE * 0.45:
-                        read_pos = max(0.0, desired_pos)
-                        smoothed_diff = 0.0
-                        fade_in = 0.0
-                        diff = 0.0
+                    # Snap cleanly when delay slider moves or stream jumps (> 250 ms), avoiding pitch bend
+                    if abs(delay_ms - prev_delay_ms) > 0.5 or abs(diff) > MASTER_RATE * 0.25:
+                        prev_delay_ms = delay_ms
+                        if abs(diff) > 240.0:
+                            read_pos = max(0.0, desired_pos)
+                            smoothed_diff = 0.0
+                            fade_in = 0.0
+                            diff = 0.0
 
-                    # Smoothly filter burst jitter from WASAPI packet cadence
-                    smoothed_diff = 0.94 * smoothed_diff + 0.06 * diff
-                    if abs(smoothed_diff) < 36.0:  # < 0.75 ms deadband avoids unnecessary resampling
+                    # Slow crystal-drift filter + 8 ms deadband prevents audible pitch warble on volume changes
+                    smoothed_diff = 0.992 * smoothed_diff + 0.008 * diff
+                    if abs(smoothed_diff) < 384.0:
                         rate_adj = 1.0
                     else:
-                        rate_adj = 1.0 + float(np.clip(smoothed_diff / (MASTER_RATE * 0.35), -0.04, 0.04))
+                        rate_adj = 1.0 + float(np.clip(smoothed_diff / (MASTER_RATE * 12.0), -0.0015, 0.0015))
 
                     step = (MASTER_RATE / float(out_rate)) * rate_adj
                     raw = self._read_ring_interpolated(read_pos, out_frames, step)

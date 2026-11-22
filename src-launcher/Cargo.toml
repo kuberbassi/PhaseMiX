@@ -1,0 +1,8 @@
+[package]
+name = "phasemix-launcher"
+version = "3.2.0"
+edition = "2024"
+
+[[bin]]
+name = "PhaseMiX"
+path = "src/main.rs"

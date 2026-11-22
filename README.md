@@ -49,7 +49,7 @@ flowchart LR
 | **Desk Triangle** | Flanking L/R + `260 Hz+` vocal center + bright front air | Everyday balanced listening |
 | **Cinema 3.2 Dialogue** | Widened L/R (`135%`) + `+3.5 dB` speech lock + side ambience | Movies & dialogue clarity |
 | **Wide Room Music** | Boosted subs + full-mid center + sparkling tweeters | Full-room music punch |
-| **Night Ear-Safe** | Tamed lows + soft vocal center | Strict `35%` cap & `-15 dB` limiter |
+| **Night Ear-Safe** | Tamed lows + soft vocal center | Strict `60%` cap & `-15 dB` limiter |
 | **Offset Desk** | Compensates asymmetric L/R speaker placement (`+18` balance) | Off-center desks |
 | **Pure Flat** | `0 dB` across all 9 bands | Direct stereo reference |
 

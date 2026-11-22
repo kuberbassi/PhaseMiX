@@ -1,26 +1,66 @@
+import { useEffect, useRef, useState } from "react";
+
 interface LedMeterProps {
   db: number;
   muted?: boolean;
   segments?: number;
 }
 
-export function LedMeter({ db, muted = false, segments = 6 }: LedMeterProps) {
-  const norm = muted || db <= -58 ? 0 : Math.max(0, Math.min(1, (db + 55) / 52));
+export function LedMeter({ db, muted = false, segments = 10 }: LedMeterProps) {
+  // Perceptual curve across -54 dBFS..0 dBFS with crisp peak-hold tick
+  const rawNorm = muted || db <= -58 ? 0 : Math.max(0, Math.min(1, (db + 54) / 52));
+  const norm = Math.pow(rawNorm, 0.85);
   const litCount = Math.round(norm * segments);
 
+  const [peakIdx, setPeakIdx] = useState(-1);
+  const peakHoldUntilRef = useRef(0);
+  const peakRef = useRef(-1);
+
+  useEffect(() => {
+    const cur = litCount - 1;
+    const now = performance.now();
+    if (muted || litCount === 0) {
+      if (peakRef.current >= 0) {
+        peakRef.current = -1;
+        setPeakIdx(-1);
+      }
+      return;
+    }
+    if (cur >= peakRef.current) {
+      peakRef.current = cur;
+      peakHoldUntilRef.current = now + 520;
+      setPeakIdx(cur);
+    } else if (now > peakHoldUntilRef.current && peakRef.current > cur) {
+      const next = peakRef.current - 1;
+      peakRef.current = next;
+      peakHoldUntilRef.current = now + 70;
+      setPeakIdx(next);
+    }
+  }, [litCount, muted]);
+
   return (
-    <div className="flex flex-col-reverse gap-[2px]" title={db <= -59 ? "-∞ dB" : `${db.toFixed(1)} dB`}>
+    <div
+      className="flex flex-col-reverse gap-[1.5px]"
+      title={db <= -59 ? "-∞ dB" : `${db.toFixed(1)} dB`}
+    >
       {Array.from({ length: segments }, (_, i) => {
         const active = i < litCount;
+        const isPeak = !active && i === peakIdx && peakIdx >= 0;
         let activeColor = "bg-[#22c55e] shadow-[0_0_5px_rgba(34,197,94,0.45)]";
-        if (i >= segments - 1) activeColor = "bg-[#ef4444] shadow-[0_0_5px_rgba(239,68,68,0.45)]";
-        else if (i >= segments - 2) activeColor = "bg-[#eab308] shadow-[0_0_5px_rgba(234,179,8,0.4)]";
+        let peakColor = "bg-[#22c55e]/85";
+        if (i >= segments - 2) {
+          activeColor = "bg-[#ef4444] shadow-[0_0_5px_rgba(239,68,68,0.5)]";
+          peakColor = "bg-[#ef4444]/90";
+        } else if (i >= segments - 4) {
+          activeColor = "bg-[#eab308] shadow-[0_0_5px_rgba(234,179,8,0.45)]";
+          peakColor = "bg-[#eab308]/90";
+        }
 
         return (
           <span
             key={i}
-            className={`h-[3px] w-3.5 rounded-full transition-colors duration-75 ${
-              active ? activeColor : "bg-white/[0.08]"
+            className={`h-[2px] w-4 rounded-full ${
+              active ? activeColor : isPeak ? peakColor : "bg-white/[0.08]"
             }`}
           />
         );

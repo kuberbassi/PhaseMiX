@@ -303,13 +303,15 @@ def soft_limit(x: np.ndarray) -> np.ndarray:
 
 
 def block_db(x: np.ndarray) -> float:
-    """Compute RMS level in dBFS floored at -60 dB."""
+    """Compute transient-responsive RMS+Peak level in dBFS floored at -60 dB."""
     if x.size == 0:
         return -60.0
     rms = float(np.sqrt(np.mean(np.square(x, dtype=np.float32))))
-    if rms <= 1e-4:
+    peak = float(np.max(np.abs(x)))
+    level = 0.65 * rms + 0.35 * peak
+    if level <= 1e-4:
         return -60.0
-    return max(-60.0, min(0.0, 20.0 * math.log10(rms)))
+    return max(-60.0, min(0.0, 20.0 * math.log10(level)))
 
 
 class TestSignalGenerator:

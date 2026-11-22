@@ -1,5 +1,5 @@
 import { Suspense, lazy, memo, type ReactNode } from "react";
-import { SlidersHorizontal, X } from "@phosphor-icons/react";
+import { SlidersHorizontal, SpeakerSlash, X } from "@phosphor-icons/react";
 import GlideSelect, { type GlideSelectOption } from "@/components/GlideSelect";
 import { LiveLedMeter } from "@/components/LiveWidgets";
 import { PillVolumeSlider } from "@/components/PillVolumeSlider";
@@ -45,8 +45,18 @@ export const SpeakerRow = memo(function SpeakerRow({
   const delayKey = `${role}_delay_ms` as keyof MixerState;
 
   const vol = Number(mixer[volKey] ?? 100);
-  const muted = Boolean(mixer[muteKey]) || mixer.master_mute || (mixer.solo !== null && mixer.solo !== role);
+  const channelMuted = Boolean(mixer[muteKey]);
+  const soloBlocked = mixer.solo !== null && mixer.solo !== role;
+  const muted = channelMuted || Boolean(mixer.master_mute) || soloBlocked;
   const delayMs = Number(mixer[delayKey] ?? 0);
+
+  const toggleMute = () => {
+    if (soloBlocked) {
+      onPatch({ solo: null, [muteKey]: false } as Partial<MixerState>);
+    } else {
+      onPatch({ [muteKey]: !channelMuted } as Partial<MixerState>);
+    }
+  };
 
   return (
     <div
@@ -58,9 +68,26 @@ export const SpeakerRow = memo(function SpeakerRow({
     >
       <div className="flex flex-wrap items-center gap-3 px-4 py-2.5 sm:flex-nowrap">
         <div className="flex min-w-[145px] items-center gap-2.5">
-          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white/[0.07] text-zinc-200">
-            {icon}
-          </div>
+          <WarmTooltip
+            content={muted ? `Unmute ${name}` : `Mute ${name}`}
+            side="right"
+            surfaceColor="#242730"
+            inkColor="#f4f5f7"
+            size="sm"
+          >
+            <button
+              type="button"
+              onClick={toggleMute}
+              aria-label={muted ? `Unmute ${name}` : `Mute ${name}`}
+              className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg transition ${
+                muted
+                  ? "bg-red-500/20 text-red-300 ring-1 ring-red-500/40 hover:bg-red-500/30"
+                  : "bg-white/[0.07] text-zinc-200 hover:bg-white/[0.14]"
+              }`}
+            >
+              {muted ? <SpeakerSlash size={16} /> : icon}
+            </button>
+          </WarmTooltip>
           <div className="min-w-0">
             <div className="truncate text-[13.5px] font-medium text-zinc-100">{name}</div>
             <div className="truncate text-[11px] text-zinc-500">
@@ -77,6 +104,8 @@ export const SpeakerRow = memo(function SpeakerRow({
             muted={muted}
             ariaLabel={`${name} Volume`}
             onChange={(v) => onPatch({ [volKey]: v } as Partial<MixerState>)}
+            onToggleMute={toggleMute}
+            onUnmute={() => onPatch({ [muteKey]: false } as Partial<MixerState>)}
           />
         </div>
 

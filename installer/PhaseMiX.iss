@@ -19,7 +19,8 @@ SetupIconFile=phasemix.ico
 UninstallDisplayIcon={app}\{#AppExeName}
 Compression=lzma2/fast
 SolidCompression=yes
-WizardStyle=modern
+WizardStyle=modern dynamic excludelightcontrols
+WizardSizePercent=115
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 
@@ -27,8 +28,11 @@ ArchitecturesInstallIn64BitMode=x64compatible
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
-Name: "desktopicon"; Description: "Create a Desktop shortcut"; GroupDescription: "Additional icons:"; Flags: unchecked
-Name: "startupicon"; Description: "Launch PhaseMiX at Windows startup"; GroupDescription: "Startup:" ; Flags: unchecked
+Name: "desktopicon"; Description: "Create a Desktop shortcut"; Flags: unchecked
+
+[InstallDelete]
+Type: filesandordirs; Name: "{app}\_internal"
+Type: files; Name: "{userstartup}\{#AppName}.lnk"
 
 [Files]
 Source: "..\dist\PhaseMiX\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
@@ -37,7 +41,6 @@ Source: "..\dist\PhaseMiX\*"; DestDir: "{app}"; Flags: ignoreversion recursesubd
 Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExeName}"
 Name: "{group}\Uninstall {#AppName}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; Tasks: desktopicon
-Name: "{userstartup}\{#AppName}"; Filename: "{app}\{#AppExeName}"; Tasks: startupicon
 
 [Run]
 Filename: "{app}\{#AppExeName}"; Description: "Launch {#AppName}"; Flags: nowait postinstall skipifsilent
