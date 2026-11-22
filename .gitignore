@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+build/
+dist/
+*.spec
+*.exe
+
+# Local personal hardware config
+config.json
+
+# Node / Frontend build
+frontend/node_modules/
+frontend/dist/
+npm-debug.log*
+
+# Rust / Tauri (upcoming)
+src-tauri/target/
+
+# OS / Editor
+.DS_Store
+Thumbs.db
+*.log

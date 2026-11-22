@@ -1,0 +1,8 @@
+Flask>=3.0.0
+Flask-Cors>=4.0.0
+numpy>=2.0.0
+scipy>=1.14.0
+PyAudioWPatch>=0.2.12.9
+sounddevice>=0.5.0
+pycaw>=20240210
+comtypes>=1.4.0
