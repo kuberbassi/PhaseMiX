@@ -7,18 +7,22 @@ import type { MixerState } from "@/types/mixer";
 
 interface SystemProtectionDrawerProps {
   mixer: MixerState;
+  autostart: boolean;
   onPatch: (patch: Partial<MixerState>) => void;
+  onToggleAutostart: (enabled: boolean) => void;
 }
 
 export const SystemProtectionDrawer = memo(function SystemProtectionDrawer({
   mixer,
+  autostart,
   onPatch,
+  onToggleAutostart,
 }: SystemProtectionDrawerProps) {
   return (
     <div className="rounded-b-2xl border-t border-white/[0.06] bg-[#16181d] px-4 py-4">
       <div className="grid grid-cols-1 gap-4 md:grid-cols-12">
         <div className="flex flex-col justify-between gap-3 rounded-xl border border-white/[0.05] bg-[#121317] p-3.5 md:col-span-7">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2.5">
               <SquishSwitch
                 checked={mixer.protection_enabled}
@@ -30,16 +34,36 @@ export const SystemProtectionDrawer = memo(function SystemProtectionDrawer({
               />
               <span className="text-xs font-medium text-zinc-200">Ear-Safe Volume Protection</span>
             </div>
-            <div className="flex items-center gap-2">
-              <SquishSwitch
-                checked={mixer.master_mute}
-                width={40}
-                height={22}
-                trackColor="#2e3139"
-                trackOnColor="#ef4444"
-                onChange={(c) => onPatch({ master_mute: c })}
-              />
-              <span className="text-xs text-zinc-400">Mute All</span>
+            <div className="flex items-center gap-3">
+              <WarmTooltip
+                content="Launch PhaseMiX silently in the system tray at Windows login"
+                surfaceColor="#242730"
+                inkColor="#f4f5f7"
+                size="sm"
+              >
+                <div className="flex items-center gap-1.5">
+                  <SquishSwitch
+                    checked={autostart}
+                    width={38}
+                    height={21}
+                    trackColor="#2e3139"
+                    trackOnColor="#22c55e"
+                    onChange={onToggleAutostart}
+                  />
+                  <span className="text-xs text-zinc-400">Startup Tray</span>
+                </div>
+              </WarmTooltip>
+              <div className="flex items-center gap-1.5">
+                <SquishSwitch
+                  checked={mixer.master_mute}
+                  width={38}
+                  height={21}
+                  trackColor="#2e3139"
+                  trackOnColor="#ef4444"
+                  onChange={(c) => onPatch({ master_mute: c })}
+                />
+                <span className="text-xs text-zinc-400">Mute All</span>
+              </div>
             </div>
           </div>
 

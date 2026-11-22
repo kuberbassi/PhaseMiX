@@ -314,6 +314,7 @@ pub struct DeviceInfo {
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct SelectedIds {
     pub input_id: String,
     pub intex_id: String,
@@ -322,6 +323,7 @@ pub struct SelectedIds {
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct SelectedNames {
     pub input_name: String,
     pub intex_name: String,
@@ -687,7 +689,7 @@ fn pick_default_devices(
     saved: &SelectedNames,
 ) -> SelectedIds {
     let mut in_id = find_id_by_name(inputs, &saved.input_name).unwrap_or_default();
-    if in_id.is_empty() {
+    if in_id.is_empty() && saved.input_name.is_empty() {
         for pat in [
             "cable input",
             "steam streaming speakers",
@@ -702,7 +704,7 @@ fn pick_default_devices(
     }
 
     let mut intex_id = find_id_by_name(outputs, &saved.intex_name).unwrap_or_default();
-    if intex_id.is_empty() {
+    if intex_id.is_empty() && saved.intex_name.is_empty() {
         for pat in ["headphones (realtek", "speakers (realtek"] {
             if let Some(d) = outputs.iter().find(|d| d.name.to_lowercase().contains(pat)) {
                 intex_id = d.id.clone();
@@ -712,7 +714,7 @@ fn pick_default_devices(
     }
 
     let mut boat_id = find_id_by_name(outputs, &saved.boat_name).unwrap_or_default();
-    if boat_id.is_empty() {
+    if boat_id.is_empty() && saved.boat_name.is_empty() {
         for pat in ["headphones (stone", "stone 358", "headphones (3.0 bt", "headphones ("] {
             if let Some(d) = outputs.iter().find(|d| {
                 let nl = d.name.to_lowercase();
@@ -725,7 +727,7 @@ fn pick_default_devices(
     }
 
     let mut laptop_id = find_id_by_name(outputs, &saved.laptop_name).unwrap_or_default();
-    if laptop_id.is_empty() {
+    if laptop_id.is_empty() && saved.laptop_name.is_empty() {
         if let Some(d) = outputs.iter().find(|d| {
             let nl = d.name.to_lowercase();
             nl.contains("speakers (realtek") && d.id != intex_id && d.id != boat_id
@@ -815,6 +817,7 @@ struct EngineInner {
     mixer: RwLock<MixerState>,
     selected_ids: RwLock<SelectedIds>,
     selected_names: RwLock<SelectedNames>,
+    preferred_names: RwLock<SelectedNames>,
     meters: RwLock<Meters>,
     telemetry: RwLock<Telemetry>,
     ring: Mutex<SharedRing>,
@@ -842,6 +845,7 @@ impl AudioRouterEngine {
             mixer: RwLock::new(MixerState::default()),
             selected_ids: RwLock::new(SelectedIds::default()),
             selected_names: RwLock::new(SelectedNames::default()),
+            preferred_names: RwLock::new(SelectedNames::default()),
             meters: RwLock::new(Meters::default()),
             telemetry: RwLock::new(Telemetry::default()),
             ring: Mutex::new(SharedRing::new()),
@@ -892,14 +896,19 @@ impl AudioRouterEngine {
         }
     }
 
+    fn backup_path(path: &PathBuf) -> PathBuf {
+        PathBuf::from(format!("{}.bak", path.display()))
+    }
+
+    fn parse_persisted_config(path: &PathBuf) -> Option<PersistedConfig> {
+        let raw = fs::read_to_string(path).ok()?;
+        serde_json::from_str::<PersistedConfig>(&raw).ok()
+    }
+
     fn load_config(inner: &EngineInner) {
-        if !inner.config_path.exists() {
-            return;
-        }
-        let Ok(raw) = fs::read_to_string(&inner.config_path) else {
-            return;
-        };
-        let Ok(parsed) = serde_json::from_str::<PersistedConfig>(&raw) else {
+        let parsed = Self::parse_persisted_config(&inner.config_path)
+            .or_else(|| Self::parse_persisted_config(&Self::backup_path(&inner.config_path)));
+        let Some(parsed) = parsed else {
             return;
         };
         let mut m = parsed.mixer;
@@ -912,19 +921,23 @@ impl AudioRouterEngine {
         m.solo = None;
 
         *inner.mixer.write() = m;
-        *inner.selected_names.write() = parsed.devices;
+        *inner.selected_names.write() = parsed.devices.clone();
+        *inner.preferred_names.write() = parsed.devices;
     }
 
     fn save_config_now(inner: &EngineInner) {
         let payload = PersistedConfig {
             mixer: inner.mixer.read().clone(),
-            devices: inner.selected_names.read().clone(),
+            devices: inner.preferred_names.read().clone(),
         };
         let Ok(json) = serde_json::to_string_pretty(&payload) else {
             return;
         };
         let tmp = PathBuf::from(format!("{}.tmp", inner.config_path.display()));
-        if fs::write(&tmp, json).is_ok() {
+        if fs::write(&tmp, &json).is_ok() {
+            if inner.config_path.exists() {
+                let _ = fs::copy(&inner.config_path, Self::backup_path(&inner.config_path));
+            }
             let _ = fs::rename(&tmp, &inner.config_path);
         }
     }
@@ -938,7 +951,7 @@ impl AudioRouterEngine {
     fn refresh_device_selection_inner(inner: &Arc<EngineInner>, persist: bool) -> DevicesResponse {
         let (inputs, outputs, has_vc) = list_wasapi_devices();
         let prev_ids = inner.selected_ids.read().clone();
-        let saved_names = inner.selected_names.read().clone();
+        let saved_names = inner.preferred_names.read().clone();
         let picked = pick_default_devices(&inputs, &outputs, &saved_names);
 
         let id_to_in: HashMap<&str, &str> =
@@ -953,8 +966,33 @@ impl AudioRouterEngine {
             laptop_name: id_to_out.get(picked.laptop_id.as_str()).unwrap_or(&"").to_string(),
         };
 
+        // Preserve previously remembered offline device names so booting without a speaker never wipes config
+        let merged_preferred = SelectedNames {
+            input_name: if !new_names.input_name.is_empty() {
+                new_names.input_name.clone()
+            } else {
+                saved_names.input_name
+            },
+            intex_name: if !new_names.intex_name.is_empty() {
+                new_names.intex_name.clone()
+            } else {
+                saved_names.intex_name
+            },
+            boat_name: if !new_names.boat_name.is_empty() {
+                new_names.boat_name.clone()
+            } else {
+                saved_names.boat_name
+            },
+            laptop_name: if !new_names.laptop_name.is_empty() {
+                new_names.laptop_name.clone()
+            } else {
+                saved_names.laptop_name
+            },
+        };
+
         *inner.selected_ids.write() = picked.clone();
         *inner.selected_names.write() = new_names.clone();
+        *inner.preferred_names.write() = merged_preferred;
         if persist {
             Self::save_config_now(inner);
         }
@@ -990,12 +1028,14 @@ impl AudioRouterEngine {
         let id_to_out: HashMap<&str, &str> =
             outputs.iter().map(|d| (d.id.as_str(), d.name.as_str())).collect();
 
-        *self.inner.selected_names.write() = SelectedNames {
+        let explicit = SelectedNames {
             input_name: id_to_in.get(ids.input_id.as_str()).unwrap_or(&"").to_string(),
             intex_name: id_to_out.get(ids.intex_id.as_str()).unwrap_or(&"").to_string(),
             boat_name: id_to_out.get(ids.boat_id.as_str()).unwrap_or(&"").to_string(),
             laptop_name: id_to_out.get(ids.laptop_id.as_str()).unwrap_or(&"").to_string(),
         };
+        *self.inner.selected_names.write() = explicit.clone();
+        *self.inner.preferred_names.write() = explicit;
         *self.inner.selected_ids.write() = ids;
         Self::save_config_now(&self.inner);
 
@@ -1107,12 +1147,13 @@ impl AudioRouterEngine {
         }
 
         // 3. Dedicated Output Threads (Primary, Center/Wireless, Built-in)
-        for (role, dev_id) in [
-            ("intex", ids.intex_id),
-            ("boat", ids.boat_id),
-            ("laptop", ids.laptop_id),
+        let pref = inner.preferred_names.read().clone();
+        for (role, dev_id, pref_name) in [
+            ("intex", ids.intex_id, pref.intex_name),
+            ("boat", ids.boat_id, pref.boat_name),
+            ("laptop", ids.laptop_id, pref.laptop_name),
         ] {
-            if dev_id.is_empty() {
+            if dev_id.is_empty() && pref_name.is_empty() {
                 set_output_status(inner, role, "Disabled".to_string());
                 continue;
             }
@@ -1506,10 +1547,14 @@ fn run_output_loop(inner: Arc<EngineInner>, role: String, initial_id: String) {
     let mut byte_buf: Vec<u8> = Vec::with_capacity(2048 * 8);
 
     while !inner.stop_flag.load(Ordering::Relaxed) {
-        let opened = DeviceEnumerator::new()
-            .and_then(|e| e.get_device(&dev_id))
-            .map_err(|e| format!("{e}"))
-            .and_then(|dev| open_render_client(&dev));
+        let opened = if dev_id.is_empty() {
+            Err("Waiting for device".to_string())
+        } else {
+            DeviceEnumerator::new()
+                .and_then(|e| e.get_device(&dev_id))
+                .map_err(|e| format!("{e}"))
+                .and_then(|dev| open_render_client(&dev))
+        };
 
         match opened {
             Ok((client, fmt, h_event)) => {
@@ -1709,17 +1754,27 @@ fn run_output_loop(inner: Arc<EngineInner>, role: String, initial_id: String) {
                 let _ = client.stop_stream();
             }
             Err(e) => {
-                set_output_status(&inner, &role, format!("Reconnecting ({e})"));
+                let waiting_offline = dev_id.is_empty();
+                set_output_status(
+                    &inner,
+                    &role,
+                    if waiting_offline {
+                        "Waiting for device".to_string()
+                    } else {
+                        format!("Reconnecting ({e})")
+                    },
+                );
                 set_output_meter(&inner, &role, -60.0);
                 // Interruptible sleep before retrying device ID / re-resolving Bluetooth name
-                for _ in 0..8 {
+                let sleep_ticks = if waiting_offline { 15 } else { 8 };
+                for _ in 0..sleep_ticks {
                     if inner.stop_flag.load(Ordering::Relaxed) {
                         return;
                     }
                     thread::sleep(Duration::from_millis(100));
                 }
                 let saved_name = {
-                    let n = inner.selected_names.read();
+                    let n = inner.preferred_names.read();
                     match role.as_str() {
                         "intex" => n.intex_name.clone(),
                         "boat" => n.boat_name.clone(),
@@ -1730,6 +1785,22 @@ fn run_output_loop(inner: Arc<EngineInner>, role: String, initial_id: String) {
                     let (_, outs, _) = list_wasapi_devices();
                     if let Some(found) = outs.iter().find(|d| d.name == saved_name) {
                         dev_id = found.id.clone();
+                        let mut ids = inner.selected_ids.write();
+                        let mut names = inner.selected_names.write();
+                        match role.as_str() {
+                            "intex" => {
+                                ids.intex_id = found.id.clone();
+                                names.intex_name = found.name.clone();
+                            }
+                            "boat" => {
+                                ids.boat_id = found.id.clone();
+                                names.boat_name = found.name.clone();
+                            }
+                            _ => {
+                                ids.laptop_id = found.id.clone();
+                                names.laptop_name = found.name.clone();
+                            }
+                        }
                     }
                 }
             }
@@ -1902,5 +1973,65 @@ mod tests {
         let saved = fs::read_to_string(&cfg).unwrap();
         assert!(saved.contains("115"));
         let _ = fs::remove_file(&cfg);
+        let _ = fs::remove_file(AudioRouterEngine::backup_path(&cfg));
+    }
+
+    #[test]
+    fn config_backup_recovers_from_corrupt_primary() {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let cfg = std::env::temp_dir().join(format!("phasemix_bak_test_{stamp}.json"));
+        let bak = AudioRouterEngine::backup_path(&cfg);
+
+        fs::write(&cfg, "{corrupt json").unwrap();
+        fs::write(
+            &bak,
+            r#"{"mixer":{"master_vol":42,"position_preset":"wide_room"},"devices":{"boat_name":"Saved Boat Test"}}"#,
+        )
+        .unwrap();
+
+        let eng = AudioRouterEngine::new(cfg.clone());
+        let st = eng.status_payload();
+        assert_eq!(st.mixer.master_vol, 42.0);
+        assert_eq!(st.mixer.position_preset, "wide_room");
+        assert_eq!(
+            eng.inner.preferred_names.read().boat_name,
+            "Saved Boat Test"
+        );
+
+        let _ = fs::remove_file(&cfg);
+        let _ = fs::remove_file(&bak);
+    }
+
+    #[test]
+    fn preferred_device_name_survives_offline_refresh_and_save() {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let cfg = std::env::temp_dir().join(format!("phasemix_pref_test_{stamp}.json"));
+        let bak = AudioRouterEngine::backup_path(&cfg);
+
+        fs::write(
+            &cfg,
+            r#"{"mixer":{"master_vol":25},"devices":{"boat_name":"Offline BT Speaker 999"}}"#,
+        )
+        .unwrap();
+
+        let eng = AudioRouterEngine::new(cfg.clone());
+        assert_eq!(eng.inner.selected_ids.read().boat_id, "");
+        assert_eq!(
+            eng.inner.preferred_names.read().boat_name,
+            "Offline BT Speaker 999"
+        );
+
+        let _ = eng.refresh_devices();
+        let saved = fs::read_to_string(&cfg).unwrap();
+        assert!(saved.contains("Offline BT Speaker 999"));
+
+        let _ = fs::remove_file(&cfg);
+        let _ = fs::remove_file(&bak);
     }
 }

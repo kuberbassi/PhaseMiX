@@ -52,6 +52,10 @@ export const mixerApi = {
       : req<StatusPayload>("/api/set_win_vol", "POST", { role, volume_pct }),
   openSoundSettings: () =>
     IS_TAURI ? invoke<{ ok: boolean }>("open_sound_settings") : req<{ ok: boolean }>("/api/open_sound_settings", "POST", {}),
+  getAutostart: () =>
+    IS_TAURI ? invoke<boolean>("get_autostart") : Promise.resolve(false),
+  setAutostart: (enabled: boolean) =>
+    IS_TAURI ? invoke<boolean>("set_autostart", { enabled }) : Promise.resolve(false),
 };
 
 export async function subscribeMetersEvent(

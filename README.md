@@ -40,7 +40,7 @@ flowchart LR
 | **3-Band EQ + Crossover** | Sculpt lows, vocals & highs independently per output | `110 Hz` shelf · `1 kHz` bell · `4.5 kHz` shelf (`±12 dB`), `HPF`/`LPF` |
 | **Ear-Safe Protection** | Prevents sudden system volume blasts or clipping | Master cap (`15–200%`), C¹ soft-knee limiter (`-30` to `-0.5 dB`) |
 | **Position Presets** | Instant stage layouts synced with live 3D room visualizer | `Desk Triangle`, `Cinema 3.2`, `Wide Room`, `Night Safe`, `Offset`, `Flat` |
-| **Windows Integration** | Keyboard Volume/Mute bridge + per-endpoint level sync | Win32 `IAudioEndpointVolume` + virtual loopback unity lock |
+| **Windows Integration** | Keyboard Volume/Mute + silent tray autostart | Win32 `IAudioEndpointVolume` + `HKCU\...\Run` (`--tray`) |
 
 ---
 

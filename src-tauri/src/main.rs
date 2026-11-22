@@ -3,7 +3,9 @@
 use windows::core::w;
 use windows::Win32::Foundation::{GetLastError, ERROR_ALREADY_EXISTS};
 use windows::Win32::System::Threading::CreateMutexW;
-use windows::Win32::UI::WindowsAndMessaging::{FindWindowW, SetForegroundWindow, ShowWindow, SW_RESTORE};
+use windows::Win32::UI::WindowsAndMessaging::{
+    FindWindowW, SetForegroundWindow, ShowWindow, SW_RESTORE, SW_SHOW,
+};
 
 fn ensure_single_instance() -> bool {
     if std::env::args().any(|a| a == "--smoke-test") {
@@ -14,6 +16,7 @@ fn ensure_single_instance() -> bool {
         if handle.is_ok() && GetLastError() == ERROR_ALREADY_EXISTS {
             if let Ok(hwnd) = FindWindowW(None, w!("PhaseMiX")) {
                 if !hwnd.is_invalid() {
+                    let _ = ShowWindow(hwnd, SW_SHOW);
                     let _ = ShowWindow(hwnd, SW_RESTORE);
                     let _ = SetForegroundWindow(hwnd);
                 }

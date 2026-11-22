@@ -1,7 +1,9 @@
 pub mod audio_engine;
 pub mod dsp;
 
+use std::fs;
 use std::os::windows::process::CommandExt;
+use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -13,6 +15,12 @@ use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     Emitter, Manager, State, WindowEvent,
+};
+use windows::core::{w, PCWSTR};
+use windows::Win32::Foundation::{ERROR_FILE_NOT_FOUND, ERROR_SUCCESS};
+use windows::Win32::System::Registry::{
+    RegCloseKey, RegCreateKeyExW, RegDeleteValueW, RegOpenKeyExW, RegQueryValueExW, RegSetValueExW,
+    HKEY, HKEY_CURRENT_USER, KEY_READ, KEY_WRITE, REG_OPTION_NON_VOLATILE, REG_SZ,
 };
 
 use audio_engine::{
@@ -146,6 +154,80 @@ fn open_sound_settings() -> OkResponse {
     OkResponse { ok: true }
 }
 
+const RUN_SUBKEY: PCWSTR = w!("Software\\Microsoft\\Windows\\CurrentVersion\\Run");
+const RUN_VALUE: PCWSTR = w!("PhaseMiX");
+
+fn autostart_opt_out_marker() -> PathBuf {
+    let appdata = std::env::var("APPDATA").unwrap_or_else(|_| ".".to_string());
+    PathBuf::from(appdata).join("PhaseMiX").join(".no_autostart")
+}
+
+#[tauri::command(rename_all = "snake_case")]
+fn get_autostart() -> bool {
+    unsafe {
+        let mut hkey = HKEY::default();
+        if RegOpenKeyExW(HKEY_CURRENT_USER, RUN_SUBKEY, Some(0), KEY_READ, &mut hkey)
+            != ERROR_SUCCESS
+        {
+            return false;
+        }
+        let mut size: u32 = 0;
+        let status = RegQueryValueExW(hkey, RUN_VALUE, None, None, None, Some(&mut size));
+        let _ = RegCloseKey(hkey);
+        status == ERROR_SUCCESS && size > 2
+    }
+}
+
+#[tauri::command(rename_all = "snake_case")]
+fn set_autostart(enabled: bool) -> Result<bool, String> {
+    let marker = autostart_opt_out_marker();
+    if let Some(parent) = marker.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+
+    unsafe {
+        let mut hkey = HKEY::default();
+        let mut disp = Default::default();
+        let rc = RegCreateKeyExW(
+            HKEY_CURRENT_USER,
+            RUN_SUBKEY,
+            Some(0),
+            None,
+            REG_OPTION_NON_VOLATILE,
+            KEY_WRITE,
+            None,
+            &mut hkey,
+            Some(&mut disp),
+        );
+        if rc != ERROR_SUCCESS {
+            return Err(format!("Failed to open startup registry key: {:?}", rc));
+        }
+
+        if enabled {
+            let exe = std::env::current_exe().map_err(|e| format!("{e}"))?;
+            let cmd = format!("\"{}\" --tray", exe.display());
+            let wide: Vec<u16> = cmd.encode_utf16().chain(std::iter::once(0)).collect();
+            let bytes =
+                std::slice::from_raw_parts(wide.as_ptr() as *const u8, wide.len() * 2);
+            let res = RegSetValueExW(hkey, RUN_VALUE, Some(0), REG_SZ, Some(bytes));
+            let _ = RegCloseKey(hkey);
+            if res != ERROR_SUCCESS {
+                return Err(format!("Failed to write startup value: {:?}", res));
+            }
+            let _ = fs::remove_file(&marker);
+            Ok(true)
+        } else {
+            let res = RegDeleteValueW(hkey, RUN_VALUE);
+            let _ = RegCloseKey(hkey);
+            if res != ERROR_SUCCESS && res != ERROR_FILE_NOT_FOUND {
+                return Err(format!("Failed to remove startup value: {:?}", res));
+            }
+            let _ = fs::write(&marker, b"disabled");
+            Ok(false)
+        }
+    }
+}
+
 fn show_main_window(app: &tauri::AppHandle) {
     if let Some(win) = app.get_webview_window("main") {
         let _ = win.unminimize();
@@ -158,6 +240,7 @@ pub fn run() {
     let engine = Arc::new(AudioRouterEngine::new(default_config_path()));
     let emitter_stop = Arc::new(AtomicBool::new(false));
     let smoke = std::env::args().any(|a| a == "--smoke-test");
+    let start_in_tray = !smoke && std::env::args().any(|a| a == "--tray");
 
     let app_state = AppState {
         engine: engine.clone(),
@@ -177,6 +260,8 @@ pub fn run() {
             boost_capture,
             set_win_vol,
             open_sound_settings,
+            get_autostart,
+            set_autostart,
         ])
         .setup(move |app| {
             if let Some(win_cfg) = app.config().app.windows.first().cloned() {
@@ -185,6 +270,8 @@ pub fn run() {
                     let smoke_wv_dir = std::env::temp_dir().join("phasemix_smoke_webview");
                     let _ = std::fs::create_dir_all(&smoke_wv_dir);
                     builder = builder.visible(false).data_directory(smoke_wv_dir);
+                } else if start_in_tray {
+                    builder = builder.visible(false);
                 }
                 builder.build()?;
             }
@@ -256,7 +343,7 @@ pub fn run() {
             }
             let _ = tray_builder.build(app)?;
 
-            // Push live 30 Hz meter snapshots over WebView2 IPC without HTTP polling overhead
+            // Push live 30 Hz meter snapshots over WebView2 IPC only while window is visible
             let emit_handle = app.handle().clone();
             let emit_eng = state.engine.clone();
             let emit_stop = state.emitter_stop.clone();
@@ -265,6 +352,14 @@ pub fn run() {
                 .spawn(move || {
                     let mut sent_stopped = false;
                     while !emit_stop.load(Ordering::Relaxed) {
+                        let visible = emit_handle
+                            .get_webview_window("main")
+                            .and_then(|w| w.is_visible().ok())
+                            .unwrap_or(false);
+                        if !visible {
+                            thread::sleep(Duration::from_millis(250));
+                            continue;
+                        }
                         let is_running = emit_eng.is_running();
                         if is_running || !sent_stopped {
                             let snap = emit_eng.fast_meters_event();

@@ -129,6 +129,7 @@ export function App() {
   const [systemDrawerOpen, setSystemDrawerOpen] = useState(false);
   const [stageOpen, setStageOpen] = useState(true);
   const [offline, setOffline] = useState(false);
+  const [autostart, setAutostart] = useState(false);
   const [perfMode, setPerfMode] = useState<PerfMode>(() => {
     const saved =
       localStorage.getItem("phasemix_perf_mode") ?? localStorage.getItem("sonix_perf_mode");
@@ -190,8 +191,9 @@ export function App() {
     void (async () => {
       await refreshDevices();
       try {
-        const st = await mixerApi.getState();
+        const [st, auto] = await Promise.all([mixerApi.getState(), mixerApi.getAutostart()]);
         applyFullPayload(st, true);
+        setAutostart(auto);
       } catch {
         // Ignore initial miss
       }
@@ -441,6 +443,16 @@ export function App() {
   const unmuteAll = () => {
     patchMixer({ master_mute: false, intex_mute: false, boat_mute: false, laptop_mute: false, solo: null });
   };
+
+  const toggleAutostart = useCallback(async (enabled: boolean) => {
+    setAutostart(enabled);
+    try {
+      const actual = await mixerApi.setAutostart(enabled);
+      setAutostart(actual);
+    } catch {
+      setAutostart(!enabled);
+    }
+  }, []);
 
   const inputOptions = useMemo<GlideSelectOption[]>(() => {
     const base: GlideSelectOption[] = [{ value: "", label: "Test Signal Only", tag: "GEN" }];
@@ -820,7 +832,12 @@ export function App() {
                             </div>
                           }
                         >
-                          <SystemProtectionDrawer mixer={mixer} onPatch={patchMixer} />
+                          <SystemProtectionDrawer
+                            mixer={mixer}
+                            autostart={autostart}
+                            onPatch={patchMixer}
+                            onToggleAutostart={(c) => void toggleAutostart(c)}
+                          />
                         </Suspense>
                       </SmoothCollapse>
                     </div>
