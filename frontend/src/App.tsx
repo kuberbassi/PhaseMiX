@@ -509,7 +509,7 @@ export function App() {
 
   return (
     <WarmTooltipGroup delay={260} warmWindow={450}>
-      <div className="relative flex min-h-screen items-center justify-center bg-[#0f1014] px-4 py-4 text-zinc-100 sm:px-6 lg:px-8">
+      <div className="relative flex min-h-screen items-center justify-center bg-[#0f1014] px-4 py-2.5 text-zinc-100 sm:px-6 sm:py-3 lg:px-8">
         {/* Centered Full-Width Studio Container */}
         <motion.div
           initial={{ opacity: 0, y: 8 }}
@@ -517,7 +517,7 @@ export function App() {
           transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
           className="relative z-10 w-full max-w-[1720px]"
         >
-          <div className="relative overflow-visible rounded-3xl border border-white/[0.07] bg-[#16171b]/95 p-5 shadow-[0_28px_80px_rgba(0,0,0,0.72)] sm:p-6">
+          <div className="relative overflow-visible rounded-3xl border border-white/[0.07] bg-[#16171b]/95 p-4 shadow-[0_28px_80px_rgba(0,0,0,0.72)] sm:p-5">
             {/* Top Smoked Aurora Wave */}
             {perfMode !== "eco" && (
               <div className="pointer-events-none absolute inset-x-0 top-0 h-32 overflow-hidden rounded-t-3xl opacity-45">
@@ -538,7 +538,7 @@ export function App() {
             )}
 
             {/* Header Bar */}
-            <header className="relative z-10 mb-5 flex flex-wrap items-center justify-between gap-3">
+            <header className="relative z-10 mb-3.5 flex flex-wrap items-center justify-between gap-3">
               <div className="flex flex-wrap items-center gap-3">
                 <h1 className="text-lg font-semibold tracking-tight text-zinc-100">PhaseMiX</h1>
                 <span className="inline-flex items-center gap-1.5 rounded-full border border-white/[0.07] bg-[#202228] px-2.5 py-0.5 text-[11px] font-medium text-zinc-300">
@@ -708,7 +708,7 @@ export function App() {
             {/* FULL-WIDTH 12-COLUMN STUDIO GRID */}
             <div className="grid grid-cols-1 gap-6 xl:grid-cols-12">
               {/* LEFT 7 COLS: SYSTEM + ACTIVE SPEAKERS */}
-              <div className="flex flex-col gap-6 xl:col-span-7">
+              <div className="flex flex-col gap-4 xl:col-span-7">
                 {/* SYSTEM SECTION */}
                 <section>
                   <div className="mb-2 flex items-center justify-between px-1">

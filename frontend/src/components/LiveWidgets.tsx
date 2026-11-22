@@ -22,13 +22,24 @@ export const LiveLedMeter = memo(function LiveLedMeter({
 
 export const LiveActualMs = memo(function LiveActualMs({ role }: { role: Role }) {
   const ms = useTelemetrySlice((s) => s.telemetry[`${role}_actual_ms`]);
-  return <span className="text-zinc-500">(live {ms.toFixed(0)} ms)</span>;
+  return <span className="text-zinc-500 tabular-nums whitespace-nowrap">(live {ms.toFixed(0)} ms)</span>;
 });
 
 export const LiveGuardBadge = memo(function LiveGuardBadge({ role }: { role: Role }) {
   const gr = useTelemetrySlice((s) => s.telemetry[`${role}_gr_db`] ?? 0);
-  if (gr >= -0.2) return null;
-  return <span className="ml-1.5 text-[11px] text-amber-300">• Guard {gr.toFixed(1)} dB</span>;
+  const active = gr < -0.2;
+  return (
+    <span
+      aria-hidden={!active}
+      className={`inline-flex w-[86px] shrink-0 items-center justify-center rounded-md border px-1.5 py-0.5 font-mono text-[10.5px] leading-none tabular-nums whitespace-nowrap transition-opacity duration-150 ${
+        active
+          ? "border-amber-500/35 bg-amber-500/15 text-amber-300 opacity-100"
+          : "pointer-events-none border-transparent bg-transparent text-transparent opacity-0"
+      }`}
+    >
+      {active ? `GR ${gr.toFixed(1)} dB` : "GR 0.0 dB"}
+    </span>
+  );
 });
 
 export const LiveOrbBadge = memo(function LiveOrbBadge({
@@ -99,19 +110,29 @@ export const LiveProtectionSummary = memo(function LiveProtectionSummary({
   const worstGr = useTelemetrySlice((s) =>
     Math.min(s.telemetry.intex_gr_db ?? 0, s.telemetry.boat_gr_db ?? 0, s.telemetry.laptop_gr_db ?? 0)
   );
+  const limiting = enabled && worstGr < -0.2;
   return (
-    <span className="flex items-center gap-1.5 text-[11px] text-zinc-500">
+    <span className="inline-flex items-center gap-2 text-[11px] text-zinc-500">
       {enabled ? (
         <>
-          <ShieldCheck size={13} className="text-[#22c55e]" />
-          Ear-Safe Cap {maxMaster}% • {ceilingDb} dB
-          {worstGr < -0.2 ? ` (Limiting ${worstGr.toFixed(1)} dB)` : ""}
+          <span
+            aria-hidden={!limiting}
+            className={`inline-flex w-[98px] justify-end font-mono text-[10.5px] tabular-nums whitespace-nowrap text-amber-300/90 transition-opacity duration-150 ${
+              limiting ? "opacity-100" : "pointer-events-none opacity-0"
+            }`}
+          >
+            {limiting ? `Limit ${worstGr.toFixed(1)} dB` : "Limit 0.0 dB"}
+          </span>
+          <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
+            <ShieldCheck size={13} className="text-[#22c55e]" />
+            Ear-Safe Cap {maxMaster}% • {ceilingDb} dB
+          </span>
         </>
       ) : (
-        <>
+        <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
           <ShieldWarning size={13} className="text-amber-400" />
           Protection Off
-        </>
+        </span>
       )}
     </span>
   );
@@ -120,7 +141,7 @@ export const LiveProtectionSummary = memo(function LiveProtectionSummary({
 export const LiveTelemetryFooter = memo(function LiveTelemetryFooter() {
   const tel = useTelemetrySlice((s) => s.telemetry);
   return (
-    <footer className="mt-4 flex flex-wrap items-center justify-between gap-2 px-1 font-mono text-[10.5px] text-zinc-500">
+    <footer className="mt-3 flex flex-wrap items-center justify-between gap-2 px-1 font-mono text-[10.5px] text-zinc-500 tabular-nums">
       <span>
         {tel.sample_rate} Hz • {tel.input_status}
       </span>

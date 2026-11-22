@@ -58,30 +58,27 @@ export const SpeakerEqDrawer = memo(function SpeakerEqDrawer({
     } as Partial<MixerState>);
 
   return (
-    <div className="rounded-b-2xl border-t border-white/[0.06] bg-[#16181d] px-4 py-4">
+    <div className="rounded-b-2xl border-t border-white/[0.06] bg-[#16181d] px-4 py-3.5">
       {/* Top Bar */}
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <div className="flex flex-wrap items-center gap-4">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2.5">
+        <div className="flex flex-wrap items-center gap-3">
           <div className="flex items-center gap-2">
             <SquishSwitch
               checked={!selfMuted}
-              width={44}
-              height={24}
+              width={40}
+              height={22}
               trackColor="#2e3139"
               trackOnColor="#22c55e"
               onChange={(active) => onPatch({ [muteKey]: !active } as Partial<MixerState>)}
             />
-            <span className="text-xs font-medium text-zinc-200">
-              Equalizer &amp; Output
-              <LiveGuardBadge role={role} />
-            </span>
+            <span className="text-xs font-medium text-zinc-200 whitespace-nowrap">EQ &amp; Output</span>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5">
             <SquishSwitch
               checked={isSolo}
-              width={40}
-              height={22}
+              width={36}
+              height={20}
               trackColor="#2e3139"
               trackOnColor="#e4e4e7"
               onChange={(c) => onPatch({ solo: c ? role : null })}
@@ -90,21 +87,22 @@ export const SpeakerEqDrawer = memo(function SpeakerEqDrawer({
           </div>
 
           {isAux && (
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1.5">
               <SquishSwitch
                 checked={Boolean(mixer[invertKey])}
-                width={40}
-                height={22}
+                width={36}
+                height={20}
                 trackColor="#2e3139"
                 trackOnColor="#eab308"
                 onChange={(c) => onPatch({ [invertKey]: c } as Partial<MixerState>)}
               />
-              <span className="text-xs text-zinc-400">Phase 180°</span>
+              <span className="text-xs text-zinc-400 whitespace-nowrap">Phase 180°</span>
             </div>
           )}
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex shrink-0 items-center gap-2">
+          <LiveGuardBadge role={role} />
           {isAux && (
             <GlideSelect
               options={ROLE_MODE_OPTIONS}
@@ -128,7 +126,7 @@ export const SpeakerEqDrawer = memo(function SpeakerEqDrawer({
             <button
               type="button"
               onClick={resetEq}
-              className="inline-flex items-center gap-1 rounded-lg border border-white/[0.08] bg-[#25272e] px-2.5 py-1 text-xs font-medium text-zinc-300 transition hover:bg-[#2f323b] hover:text-white"
+              className="inline-flex items-center gap-1 whitespace-nowrap rounded-lg border border-white/[0.08] bg-[#25272e] px-2.5 py-1 text-xs font-medium text-zinc-300 transition hover:bg-[#2f323b] hover:text-white"
             >
               <ArrowsCounterClockwise size={12} />
               Flat EQ
