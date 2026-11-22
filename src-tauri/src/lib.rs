@@ -1,3 +1,4 @@
+pub mod audio_engine;
 pub mod dsp;
 
 pub fn run() {
