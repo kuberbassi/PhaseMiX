@@ -179,6 +179,16 @@ pub fn run() {
             open_sound_settings,
         ])
         .setup(move |app| {
+            if let Some(win_cfg) = app.config().app.windows.first().cloned() {
+                let mut builder = tauri::WebviewWindowBuilder::from_config(app.handle(), &win_cfg)?;
+                if smoke {
+                    let smoke_wv_dir = std::env::temp_dir().join("phasemix_smoke_webview");
+                    let _ = std::fs::create_dir_all(&smoke_wv_dir);
+                    builder = builder.visible(false).data_directory(smoke_wv_dir);
+                }
+                builder.build()?;
+            }
+
             let state = app.state::<AppState>();
             state.engine.start();
 

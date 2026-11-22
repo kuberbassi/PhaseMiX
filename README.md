@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="src-tauri/icons/128x128@2x.png" alt="PhaseMiX Logo" width="84" />
+
 # PhaseMiX
 
 **Sync wired, Bluetooth, and built-in speakers into one phase-aligned Windows soundstage.**

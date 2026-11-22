@@ -1,17 +1,4 @@
-# Python
-__pycache__/
-*.py[cod]
-*.egg-info/
-.venv/
-venv/
-build/
-dist/
-dist_installer/
-*.spec
-!installer/PhaseMiX.spec
-*.exe
-
-# Local personal hardware config
+# Local hardware config
 config.json
 
 # Node / Frontend build
@@ -20,10 +7,10 @@ frontend/dist/
 npm-debug.log*
 
 # Rust / Tauri
-src-launcher/target/
 src-tauri/target/
+*.exe
 
-# OS / Editor
+# OS / Editor / Logs
 .DS_Store
 Thumbs.db
 *.log

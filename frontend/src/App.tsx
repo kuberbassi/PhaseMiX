@@ -130,7 +130,8 @@ export function App() {
   const [stageOpen, setStageOpen] = useState(true);
   const [offline, setOffline] = useState(false);
   const [perfMode, setPerfMode] = useState<PerfMode>(() => {
-    const saved = localStorage.getItem("sonix_perf_mode");
+    const saved =
+      localStorage.getItem("phasemix_perf_mode") ?? localStorage.getItem("sonix_perf_mode");
     return saved === "eco" || saved === "studio" ? saved : "balanced";
   });
 
@@ -421,7 +422,7 @@ export function App() {
   const cyclePerfMode = () => {
     const next: PerfMode = perfMode === "balanced" ? "studio" : perfMode === "studio" ? "eco" : "balanced";
     setPerfMode(next);
-    localStorage.setItem("sonix_perf_mode", next);
+    localStorage.setItem("phasemix_perf_mode", next);
   };
 
   const applyPreset = (preset: PositionPreset) => {
@@ -665,7 +666,7 @@ export function App() {
                   <div className="flex items-center justify-between gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3.5 py-2 text-xs text-amber-200">
                     <span className="flex items-center gap-2">
                       <ShieldWarning size={15} className="text-amber-400" />
-                      Backend offline — run start_mixer.bat to reconnect.
+                      Audio engine offline — click Retry or relaunch PhaseMiX to reconnect.
                     </span>
                     <button
                       type="button"

@@ -12,6 +12,7 @@
   "app": {
     "windows": [
       {
+        "create": false,
         "title": "PhaseMiX",
         "width": 1380,
         "height": 880,

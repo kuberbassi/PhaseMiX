@@ -1741,6 +1741,13 @@ fn run_win_key_bridge(inner: Arc<EngineInner>, input_id: String) {
     if input_id.is_empty() {
         return;
     }
+    let in_name = inner.selected_names.read().input_name.to_lowercase();
+    if !["steam streaming", "cable", "voicemeeter"]
+        .iter()
+        .any(|tag| in_name.contains(tag))
+    {
+        return;
+    }
     ensure_com();
     const UNITY_SCALAR: f32 = 0.98;
 
