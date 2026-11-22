@@ -5,7 +5,9 @@ from __future__ import annotations
 import logging
 import math
 import os
+import re
 import subprocess
+import sys
 import threading
 import time
 import webbrowser
@@ -23,18 +25,26 @@ from audio_engine import (
 )
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-FRONTEND_DIST_DIR = os.path.join(BASE_DIR, "frontend", "dist")
-CONFIG_PATH = os.path.join(BASE_DIR, "config.json")
+RESOURCE_DIR = getattr(sys, "_MEIPASS", BASE_DIR)
+FRONTEND_DIST_DIR = os.path.join(RESOURCE_DIR, "frontend", "dist")
 
-ALLOWED_LOCAL_ORIGINS = {
-    "http://127.0.0.1:5055",
-    "http://localhost:5055",
-    "http://127.0.0.1:5173",
-    "http://localhost:5173",
-}
+if os.environ.get("PHASEMIX_CONFIG"):
+    CONFIG_PATH = os.environ["PHASEMIX_CONFIG"]
+elif getattr(sys, "frozen", False):
+    CONFIG_PATH = os.path.join(
+        os.environ.get("APPDATA") or os.path.expanduser("~"),
+        "PhaseMiX",
+        "config.json",
+    )
+else:
+    CONFIG_PATH = os.path.join(BASE_DIR, "config.json")
+
+_cfg_parent = os.path.dirname(CONFIG_PATH)
+if _cfg_parent:
+    os.makedirs(_cfg_parent, exist_ok=True)
 
 app = Flask(__name__, static_folder=None)
-CORS(app, origins=list(ALLOWED_LOCAL_ORIGINS))
+CORS(app, origins=re.compile(r"^https?://(127\.0\.0\.1|localhost)(:\d+)?$"))
 engine = AudioRouterEngine(CONFIG_PATH)
 
 
@@ -236,7 +246,7 @@ def _open_browser_later(url: str) -> None:
 if __name__ == "__main__":
     port = int(os.environ.get("MIXER_PORT", "5055"))
     url = f"http://127.0.0.1:{port}"
-    print(f"Starting Intex 2.2 + boAt Center Mixer Control Panel at {url}")
+    print(f"Starting PhaseMiX Control Panel at {url}")
     engine.start()
     if os.environ.get("NO_BROWSER") != "1":
         _open_browser_later(url)

@@ -65,7 +65,19 @@ flowchart LR
 
 ---
 
-## Quick Start
+## Windows Installer & Desktop App
+
+Run `PhaseMiX-Setup.exe` for a standalone Edge WebView2 window with system tray playback, single-instance focus, and settings stored cleanly in `%APPDATA%\PhaseMiX\config.json`.
+
+To build the `.exe` installer from source (requires Inno Setup 6):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File installer\build_installer.ps1
+```
+
+---
+
+## Quick Start (Dev Mode)
 
 ```powershell
 # 1. Build frontend UI
