@@ -35,7 +35,7 @@ import { SpeakerRow } from "@/components/SpeakerRow";
 import SplitFlapText from "@/components/SplitFlapText";
 import SquishSwitch from "@/components/SquishSwitch";
 import WarmTooltip, { WarmTooltipGroup } from "@/components/WarmTooltip";
-import { IS_TAURI, mixerApi, subscribeMetersEvent, type FastMetersResponse } from "@/lib/api";
+import { IS_TAURI, mixerApi, subscribeMetersEvent, subscribeMixerEvent, type FastMetersResponse } from "@/lib/api";
 import { telemetryStore } from "@/lib/telemetryStore";
 import {
   POSITION_PRESETS,
@@ -57,35 +57,35 @@ const INITIAL_MIXER: MixerState = {
   master_mute: false,
   protection_enabled: true,
   protection_max_master: 60,
-  protection_ceiling_db: -15,
+  protection_ceiling_db: -6,
   position_preset: "desk_triangle",
   intex_vol: 100,
   intex_mute: false,
-  intex_delay_ms: 222,
+  intex_delay_ms: 224,
   intex_balance: 0,
-  intex_bass_db: 0,
-  intex_mid_db: 0,
-  intex_treble_db: 0,
-  intex_width: 100,
-  boat_vol: 50,
+  intex_bass_db: 0.5,
+  intex_mid_db: -2.0,
+  intex_treble_db: 0.5,
+  intex_width: 106,
+  boat_vol: 60,
   boat_mute: false,
   boat_delay_ms: 0,
   boat_mode: "vocal_mid",
-  boat_hpf_hz: 350,
-  boat_lpf_hz: 18000,
-  boat_bass_db: 0,
-  boat_mid_db: 0,
-  boat_treble_db: 0,
+  boat_hpf_hz: 260,
+  boat_lpf_hz: 14000,
+  boat_bass_db: -2.5,
+  boat_mid_db: 2.0,
+  boat_treble_db: 0.5,
   boat_invert: false,
-  laptop_vol: 200,
+  laptop_vol: 125,
   laptop_mute: false,
-  laptop_delay_ms: 222,
+  laptop_delay_ms: 224,
   laptop_mode: "stereo",
-  laptop_hpf_hz: 250,
+  laptop_hpf_hz: 300,
   laptop_lpf_hz: 18000,
-  laptop_bass_db: 0,
-  laptop_mid_db: 0,
-  laptop_treble_db: 0,
+  laptop_bass_db: -2.0,
+  laptop_mid_db: 0.0,
+  laptop_treble_db: 2.0,
   laptop_invert: false,
   solo: null,
   test_mode: "off",
@@ -278,10 +278,23 @@ export function App() {
     };
 
     if (IS_TAURI) {
-      let unlisten: (() => void) | null = null;
+      let unlistenMeters: (() => void) | null = null;
+      let unlistenMixer: (() => void) | null = null;
       void subscribeMetersEvent(handleMeters).then((fn) => {
         if (alive) {
-          unlisten = fn;
+          unlistenMeters = fn;
+        } else {
+          fn();
+        }
+      });
+      void subscribeMixerEvent((m) => {
+        if (!alive) return;
+        pendingPatchRef.current = {};
+        lastLocalEditRef.current = 0;
+        setMixer((prev) => ({ ...prev, ...m }));
+      }).then((fn) => {
+        if (alive) {
+          unlistenMixer = fn;
         } else {
           fn();
         }
@@ -295,7 +308,8 @@ export function App() {
       return () => {
         alive = false;
         document.removeEventListener("visibilitychange", onVis);
-        unlisten?.();
+        unlistenMeters?.();
+        unlistenMixer?.();
       };
     }
 

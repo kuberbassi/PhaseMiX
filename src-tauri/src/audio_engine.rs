@@ -14,8 +14,14 @@ use wasapi::{
     initialize_mta, AudioClient, Device, DeviceEnumerator, DeviceState, Direction, SampleType,
     StreamMode, WaveFormat,
 };
+use windows::core::w;
+use windows::Win32::Foundation::HANDLE;
 use windows::Win32::Media::Audio::Endpoints::IAudioEndpointVolume;
 use windows::Win32::System::Com::CLSCTX_ALL;
+use windows::Win32::System::Threading::{
+    AvRevertMmThreadCharacteristics, AvSetMmThreadCharacteristicsW, GetCurrentThread,
+    SetThreadPriority, THREAD_PRIORITY_HIGHEST,
+};
 
 use crate::dsp::{
     block_db, AuxChannelProcessor, AuxMode, AuxParams, PrimaryParams, PrimaryProcessor,
@@ -33,6 +39,27 @@ const OUTPUT_ROLES: [&str; 3] = ["intex", "boat", "laptop"];
 #[inline]
 fn ensure_com() {
     let _ = initialize_mta();
+}
+
+struct AudioThreadGuard(Option<HANDLE>);
+
+impl Drop for AudioThreadGuard {
+    fn drop(&mut self) {
+        if let Some(h) = self.0.take() {
+            unsafe {
+                let _ = AvRevertMmThreadCharacteristics(h);
+            }
+        }
+    }
+}
+
+fn elevate_audio_thread() -> AudioThreadGuard {
+    unsafe {
+        let _ = SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST);
+        let mut task_idx: u32 = 0;
+        let mmcss = AvSetMmThreadCharacteristicsW(w!("Pro Audio"), &mut task_idx).ok();
+        AudioThreadGuard(mmcss)
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -87,40 +114,222 @@ impl Default for MixerState {
             master_mute: false,
             protection_enabled: true,
             protection_max_master: 60.0,
-            protection_ceiling_db: -15.0,
+            protection_ceiling_db: -6.0,
             position_preset: "desk_triangle".to_string(),
             intex_vol: 100.0,
             intex_mute: false,
-            intex_delay_ms: 222.0,
+            intex_delay_ms: 224.0,
             intex_balance: 0.0,
-            intex_bass_db: 0.0,
-            intex_mid_db: 0.0,
-            intex_treble_db: 0.0,
-            intex_width: 100.0,
-            boat_vol: 85.0,
+            intex_bass_db: 0.5,
+            intex_mid_db: -2.0,
+            intex_treble_db: 0.5,
+            intex_width: 106.0,
+            boat_vol: 60.0,
             boat_mute: false,
             boat_delay_ms: 0.0,
-            boat_mode: "mono_center".to_string(),
-            boat_hpf_hz: 160.0,
-            boat_lpf_hz: 18000.0,
-            boat_bass_db: 0.0,
-            boat_mid_db: 0.0,
-            boat_treble_db: 0.0,
+            boat_mode: "vocal_mid".to_string(),
+            boat_hpf_hz: 260.0,
+            boat_lpf_hz: 14000.0,
+            boat_bass_db: -2.5,
+            boat_mid_db: 2.0,
+            boat_treble_db: 0.5,
             boat_invert: false,
-            laptop_vol: 75.0,
+            laptop_vol: 125.0,
             laptop_mute: false,
-            laptop_delay_ms: 222.0,
+            laptop_delay_ms: 224.0,
             laptop_mode: "stereo".to_string(),
-            laptop_hpf_hz: 250.0,
+            laptop_hpf_hz: 300.0,
             laptop_lpf_hz: 18000.0,
-            laptop_bass_db: 0.0,
+            laptop_bass_db: -2.0,
             laptop_mid_db: 0.0,
-            laptop_treble_db: 0.0,
+            laptop_treble_db: 2.0,
             laptop_invert: false,
             solo: None,
             test_mode: "off".to_string(),
         }
     }
+}
+
+pub fn preset_patch(id: &str) -> Option<MixerPatch> {
+    let patch = match id {
+        "desk_triangle" => MixerPatch {
+            position_preset: Some("desk_triangle".into()),
+            protection_max_master: Some(60.0),
+            protection_ceiling_db: Some(-6.0),
+            intex_vol: Some(100.0),
+            intex_balance: Some(0.0),
+            intex_width: Some(106.0),
+            intex_delay_ms: Some(224.0),
+            intex_bass_db: Some(0.5),
+            intex_mid_db: Some(-2.0),
+            intex_treble_db: Some(0.5),
+            boat_vol: Some(60.0),
+            boat_mode: Some("vocal_mid".into()),
+            boat_delay_ms: Some(0.0),
+            boat_hpf_hz: Some(260.0),
+            boat_lpf_hz: Some(14000.0),
+            boat_bass_db: Some(-2.5),
+            boat_mid_db: Some(2.0),
+            boat_treble_db: Some(0.5),
+            laptop_vol: Some(125.0),
+            laptop_mode: Some("stereo".into()),
+            laptop_delay_ms: Some(224.0),
+            laptop_hpf_hz: Some(300.0),
+            laptop_lpf_hz: Some(18000.0),
+            laptop_bass_db: Some(-2.0),
+            laptop_mid_db: Some(0.0),
+            laptop_treble_db: Some(2.0),
+            ..Default::default()
+        },
+        "cinema_center" => MixerPatch {
+            position_preset: Some("cinema_center".into()),
+            protection_max_master: Some(60.0),
+            protection_ceiling_db: Some(-6.0),
+            intex_vol: Some(100.0),
+            intex_balance: Some(0.0),
+            intex_width: Some(135.0),
+            intex_delay_ms: Some(224.0),
+            intex_bass_db: Some(2.5),
+            intex_mid_db: Some(-3.5),
+            intex_treble_db: Some(0.0),
+            boat_vol: Some(72.0),
+            boat_mode: Some("vocal_mid".into()),
+            boat_delay_ms: Some(0.0),
+            boat_hpf_hz: Some(220.0),
+            boat_lpf_hz: Some(12000.0),
+            boat_bass_db: Some(-3.0),
+            boat_mid_db: Some(3.5),
+            boat_treble_db: Some(1.0),
+            laptop_vol: Some(120.0),
+            laptop_mode: Some("side_ambience".into()),
+            laptop_delay_ms: Some(224.0),
+            laptop_hpf_hz: Some(340.0),
+            laptop_lpf_hz: Some(15000.0),
+            laptop_bass_db: Some(-3.0),
+            laptop_mid_db: Some(0.0),
+            laptop_treble_db: Some(2.0),
+            ..Default::default()
+        },
+        "wide_room" => MixerPatch {
+            position_preset: Some("wide_room".into()),
+            protection_max_master: Some(60.0),
+            protection_ceiling_db: Some(-6.0),
+            intex_vol: Some(110.0),
+            intex_balance: Some(0.0),
+            intex_width: Some(120.0),
+            intex_delay_ms: Some(224.0),
+            intex_bass_db: Some(4.0),
+            intex_mid_db: Some(0.0),
+            intex_treble_db: Some(1.5),
+            boat_vol: Some(75.0),
+            boat_mode: Some("mono_center".into()),
+            boat_delay_ms: Some(0.0),
+            boat_hpf_hz: Some(185.0),
+            boat_lpf_hz: Some(17500.0),
+            boat_bass_db: Some(0.0),
+            boat_mid_db: Some(1.5),
+            boat_treble_db: Some(1.5),
+            laptop_vol: Some(160.0),
+            laptop_mode: Some("stereo".into()),
+            laptop_delay_ms: Some(224.0),
+            laptop_hpf_hz: Some(250.0),
+            laptop_lpf_hz: Some(18000.0),
+            laptop_bass_db: Some(0.0),
+            laptop_mid_db: Some(1.0),
+            laptop_treble_db: Some(2.0),
+            ..Default::default()
+        },
+        "night_safe" => MixerPatch {
+            position_preset: Some("night_safe".into()),
+            protection_enabled: Some(true),
+            protection_max_master: Some(60.0),
+            protection_ceiling_db: Some(-15.0),
+            intex_vol: Some(75.0),
+            intex_balance: Some(0.0),
+            intex_width: Some(95.0),
+            intex_delay_ms: Some(224.0),
+            intex_bass_db: Some(-5.0),
+            intex_mid_db: Some(0.0),
+            intex_treble_db: Some(-2.0),
+            boat_vol: Some(65.0),
+            boat_mode: Some("vocal_mid".into()),
+            boat_delay_ms: Some(0.0),
+            boat_hpf_hz: Some(240.0),
+            boat_lpf_hz: Some(10000.0),
+            boat_bass_db: Some(-2.5),
+            boat_mid_db: Some(2.0),
+            boat_treble_db: Some(-1.5),
+            laptop_vol: Some(80.0),
+            laptop_mode: Some("stereo".into()),
+            laptop_delay_ms: Some(224.0),
+            laptop_hpf_hz: Some(280.0),
+            laptop_lpf_hz: Some(12000.0),
+            laptop_bass_db: Some(-3.0),
+            laptop_mid_db: Some(1.0),
+            laptop_treble_db: Some(-2.0),
+            ..Default::default()
+        },
+        "asym_desk" => MixerPatch {
+            position_preset: Some("asym_desk".into()),
+            protection_max_master: Some(60.0),
+            protection_ceiling_db: Some(-6.0),
+            intex_vol: Some(100.0),
+            intex_balance: Some(18.0),
+            intex_width: Some(105.0),
+            intex_delay_ms: Some(224.0),
+            intex_bass_db: Some(1.0),
+            intex_mid_db: Some(-1.5),
+            intex_treble_db: Some(0.5),
+            boat_vol: Some(65.0),
+            boat_mode: Some("vocal_mid".into()),
+            boat_delay_ms: Some(0.0),
+            boat_hpf_hz: Some(280.0),
+            boat_lpf_hz: Some(16000.0),
+            boat_bass_db: Some(-2.0),
+            boat_mid_db: Some(2.0),
+            boat_treble_db: Some(1.0),
+            laptop_vol: Some(165.0),
+            laptop_mode: Some("stereo".into()),
+            laptop_delay_ms: Some(224.0),
+            laptop_hpf_hz: Some(260.0),
+            laptop_lpf_hz: Some(18000.0),
+            laptop_bass_db: Some(-1.0),
+            laptop_mid_db: Some(0.5),
+            laptop_treble_db: Some(1.5),
+            ..Default::default()
+        },
+        "pure_mirror" => MixerPatch {
+            position_preset: Some("pure_mirror".into()),
+            protection_max_master: Some(60.0),
+            protection_ceiling_db: Some(-6.0),
+            intex_vol: Some(100.0),
+            intex_balance: Some(0.0),
+            intex_width: Some(100.0),
+            intex_delay_ms: Some(224.0),
+            intex_bass_db: Some(0.0),
+            intex_mid_db: Some(0.0),
+            intex_treble_db: Some(0.0),
+            boat_vol: Some(65.0),
+            boat_mode: Some("stereo".into()),
+            boat_delay_ms: Some(0.0),
+            boat_hpf_hz: Some(0.0),
+            boat_lpf_hz: Some(18000.0),
+            boat_bass_db: Some(0.0),
+            boat_mid_db: Some(0.0),
+            boat_treble_db: Some(0.0),
+            laptop_vol: Some(130.0),
+            laptop_mode: Some("stereo".into()),
+            laptop_delay_ms: Some(224.0),
+            laptop_hpf_hz: Some(220.0),
+            laptop_lpf_hz: Some(18000.0),
+            laptop_bass_db: Some(0.0),
+            laptop_mid_db: Some(0.0),
+            laptop_treble_db: Some(0.0),
+            ..Default::default()
+        },
+        _ => return None,
+    };
+    Some(patch)
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -1055,6 +1264,17 @@ impl AudioRouterEngine {
         updated
     }
 
+    pub fn apply_preset(&self, id: &str) -> Option<MixerState> {
+        let patch = preset_patch(id)?;
+        let updated = {
+            let mut m = self.inner.mixer.write();
+            m.apply_patch(&patch);
+            m.clone()
+        };
+        Self::save_config_now(&self.inner);
+        Some(updated)
+    }
+
     pub fn set_win_vol(&self, role: &str, volume_pct: f64) -> (bool, StatusPayload) {
         let ids = self.inner.selected_ids.read().clone();
         let dev_id = match role {
@@ -1064,7 +1284,13 @@ impl AudioRouterEngine {
             "laptop" => ids.laptop_id.as_str(),
             _ => return (false, self.status_payload()),
         };
-        let ok = set_device_endpoint_volume(dev_id, volume_pct.clamp(0.0, 100.0), true);
+        // Ear-Safe guard caps manual Windows hardware endpoint changes at 50% when active
+        let max_pct = if role != "input" && self.inner.mixer.read().protection_enabled {
+            50.0
+        } else {
+            100.0
+        };
+        let ok = set_device_endpoint_volume(dev_id, volume_pct.clamp(0.0, max_pct), true);
         (ok, self.status_payload())
     }
 
@@ -1339,6 +1565,7 @@ fn open_loopback_or_capture(
 
 fn run_capture_pump(inner: Arc<EngineInner>, device_id: String) {
     ensure_com();
+    let _prio_guard = elevate_audio_thread();
     let mut sig_gen = TestSignalGenerator::new(MASTER_RATE_F64);
     let silence = [[0.0_f32; 2]; PUMP_BLOCK_FRAMES];
     let mut test_buf = [[0.0_f32; 2]; PUMP_BLOCK_FRAMES];
@@ -1409,19 +1636,33 @@ fn run_capture_pump(inner: Arc<EngineInner>, device_id: String) {
                 let mut last_audio_ts = Instant::now();
                 let mut silence_pace = Instant::now();
 
-                while !inner.stop_flag.load(Ordering::Relaxed) {
+                'capture_stream: while !inner.stop_flag.load(Ordering::Relaxed) {
                     if TestMode::from_str(&inner.mixer.read().test_mode) != TestMode::Off {
                         break;
                     }
                     if let Some(ref ev) = h_event {
-                        let _ = ev.wait_for_event(15);
+                        if let Err(e) = ev.wait_for_event(15) {
+                            let msg = format!("{e}");
+                            if !msg.contains("timed out") && !msg.contains("Timeout") {
+                                inner.telemetry.write().input_status =
+                                    format!("Reconnecting Input ({msg})");
+                                break 'capture_stream;
+                            }
+                        }
                     } else {
                         thread::sleep(Duration::from_millis(10));
                     }
 
                     let mut got_frames = false;
                     loop {
-                        let pkt = cap_client.get_next_packet_size().unwrap_or(Some(0)).unwrap_or(0);
+                        let pkt = match cap_client.get_next_packet_size() {
+                            Ok(p) => p.unwrap_or(0),
+                            Err(e) => {
+                                inner.telemetry.write().input_status =
+                                    format!("Reconnecting Input ({e})");
+                                break 'capture_stream;
+                            }
+                        };
                         if pkt == 0 {
                             break;
                         }
@@ -1456,8 +1697,9 @@ fn run_capture_pump(inner: Arc<EngineInner>, device_id: String) {
                             }
                             Ok(_) => break,
                             Err(e) => {
-                                inner.telemetry.write().input_status = format!("Input Error ({e})");
-                                break;
+                                inner.telemetry.write().input_status =
+                                    format!("Reconnecting Input ({e})");
+                                break 'capture_stream;
                             }
                         }
                     }
@@ -1474,6 +1716,11 @@ fn run_capture_pump(inner: Arc<EngineInner>, device_id: String) {
                     }
                 }
                 let _ = client.stop_stream();
+                if !inner.stop_flag.load(Ordering::Relaxed)
+                    && TestMode::from_str(&inner.mixer.read().test_mode) == TestMode::Off
+                {
+                    thread::sleep(Duration::from_millis(250));
+                }
             }
             Err(err) => {
                 inner.telemetry.write().input_status = format!("Input Error ({err})");
@@ -1542,6 +1789,7 @@ fn frames_to_le_bytes(frames: &[[f32; 2]], byte_buf: &mut Vec<u8>) {
 
 fn run_output_loop(inner: Arc<EngineInner>, role: String, initial_id: String) {
     ensure_com();
+    let _prio_guard = elevate_audio_thread();
     let mut dev_id = initial_id;
     let mut block_buf: Vec<[f32; 2]> = vec![[0.0; 2]; 2048];
     let mut byte_buf: Vec<u8> = Vec::with_capacity(2048 * 8);
@@ -1890,9 +2138,9 @@ mod tests {
     fn mixer_patch_clamps_bounds_and_enforces_protection_cap() {
         let mut m = MixerState::default();
         assert_eq!(m.protection_max_master, 60.0);
-        assert_eq!(m.protection_ceiling_db, -15.0);
-        assert_eq!(m.intex_delay_ms, 222.0);
-        assert_eq!(m.laptop_delay_ms, 222.0);
+        assert_eq!(m.protection_ceiling_db, -6.0);
+        assert_eq!(m.intex_delay_ms, 224.0);
+        assert_eq!(m.laptop_delay_ms, 224.0);
 
         m.apply_patch(&MixerPatch {
             master_vol: Some(999.0),
@@ -1907,6 +2155,22 @@ mod tests {
         assert_eq!(m.protection_ceiling_db, -30.0);
         assert_eq!(m.intex_delay_ms, 0.0);
         assert_eq!(m.boat_bass_db, 12.0);
+    }
+
+    #[test]
+    fn preset_switch_restores_daytime_and_night_ceilings() {
+        let mut m = MixerState::default();
+        let night = preset_patch("night_safe").expect("night_safe preset missing");
+        m.apply_patch(&night);
+        assert_eq!(m.protection_ceiling_db, -15.0);
+        assert_eq!(m.position_preset, "night_safe");
+
+        let music = preset_patch("wide_room").expect("wide_room preset missing");
+        m.apply_patch(&music);
+        assert_eq!(m.protection_ceiling_db, -6.0);
+        assert_eq!(m.position_preset, "wide_room");
+        assert_eq!(m.boat_hpf_hz, 185.0);
+        assert_eq!(m.laptop_treble_db, 2.0);
     }
 
     #[test]

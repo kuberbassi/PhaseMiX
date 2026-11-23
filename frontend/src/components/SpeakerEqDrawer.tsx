@@ -145,7 +145,11 @@ export const SpeakerEqDrawer = memo(function SpeakerEqDrawer({
             { label: "Treble", freq: "4.5 kHz", val: trebleDb, key: trebleKey },
           ].map((band) => (
             <div key={band.label} className="flex items-end gap-1.5">
-              <div className="flex flex-col items-center gap-1.5">
+              <div
+                onDoubleClick={() => onPatch({ [band.key]: 0 } as Partial<MixerState>)}
+                title="Double-click to reset 0 dB"
+                className="flex flex-col items-center gap-1.5"
+              >
                 <CometDial
                   value={band.val}
                   min={-12}
@@ -209,7 +213,22 @@ export const SpeakerEqDrawer = memo(function SpeakerEqDrawer({
                     {d > 0 ? `+${d}` : d}
                   </button>
                 ))}
-                {role === "laptop" && (
+                {role !== "laptop" ? (
+                  <WarmTooltip
+                    content={`Snap to ${role === "intex" ? "224 ms Bluetooth sync target" : "0 ms reference"}`}
+                    surfaceColor="#242730"
+                    inkColor="#f4f5f7"
+                    size="sm"
+                  >
+                    <button
+                      type="button"
+                      onClick={() => onPatch({ [delayKey]: role === "intex" ? 224 : 0 } as Partial<MixerState>)}
+                      className="rounded-md bg-white/10 px-2 py-1 font-mono text-[10px] font-medium text-zinc-200 hover:bg-white/20"
+                    >
+                      {role === "intex" ? "224" : "0 ms"}
+                    </button>
+                  </WarmTooltip>
+                ) : (
                   <WarmTooltip content="Copy Primary ms delay to Built-in speakers" surfaceColor="#242730" inkColor="#f4f5f7" size="sm">
                     <button
                       type="button"
@@ -326,17 +345,29 @@ export const SpeakerEqDrawer = memo(function SpeakerEqDrawer({
 
           <div>
             <div className="mb-1 flex items-center justify-between text-[11px] text-zinc-400">
-              <span>Windows Device Level</span>
-              <span className="font-mono">
+              <span>
+                Windows Device Level
+                {mixer.protection_enabled && (
+                  <span className="ml-1.5 text-[10px] text-zinc-500">(Ear-Safe max 50%)</span>
+                )}
+              </span>
+              <span
+                className={`font-mono tabular-nums ${
+                  winVol && winVol.volume_pct > 50 ? "text-amber-300" : ""
+                }`}
+              >
                 {winVol ? `${winVol.volume_pct}%${winVol.db != null ? ` (${winVol.db} dB)` : ""}` : "--"}
               </span>
             </div>
             <div className="flex items-center gap-2">
               <div className="flex-1">
                 <WakeSlider
-                  value={winVol ? Math.round(winVol.volume_pct) : 15}
+                  value={Math.min(
+                    mixer.protection_enabled ? 50 : 100,
+                    winVol ? Math.round(winVol.volume_pct) : 15
+                  )}
                   min={0}
-                  max={100}
+                  max={mixer.protection_enabled ? 50 : 100}
                   step={1}
                   bars={28}
                   height={20}
@@ -350,7 +381,7 @@ export const SpeakerEqDrawer = memo(function SpeakerEqDrawer({
                 />
               </div>
               <div className="flex gap-1">
-                {[15, 35, 65].map((pct) => (
+                {[15, 35, 50].map((pct) => (
                   <button
                     key={pct}
                     type="button"

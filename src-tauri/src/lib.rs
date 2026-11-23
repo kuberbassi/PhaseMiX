@@ -12,15 +12,18 @@ use std::time::Duration;
 
 use serde::Serialize;
 use tauri::{
-    menu::{Menu, MenuItem, PredefinedMenuItem},
+    menu::{Menu, MenuItem, PredefinedMenuItem, Submenu},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    Emitter, Manager, State, WindowEvent,
+    Emitter, Manager, RunEvent, State, WebviewWindowBuilder,
 };
 use windows::core::{w, PCWSTR};
-use windows::Win32::Foundation::{ERROR_FILE_NOT_FOUND, ERROR_SUCCESS};
+use windows::Win32::Foundation::{CloseHandle, ERROR_FILE_NOT_FOUND, ERROR_SUCCESS};
 use windows::Win32::System::Registry::{
     RegCloseKey, RegCreateKeyExW, RegDeleteValueW, RegOpenKeyExW, RegQueryValueExW, RegSetValueExW,
     HKEY, HKEY_CURRENT_USER, KEY_READ, KEY_WRITE, REG_OPTION_NON_VOLATILE, REG_SZ,
+};
+use windows::Win32::System::Threading::{
+    CreateEventW, OpenEventW, SetEvent, WaitForSingleObject, EVENT_MODIFY_STATE,
 };
 
 use audio_engine::{
@@ -228,12 +231,33 @@ fn set_autostart(enabled: bool) -> Result<bool, String> {
     }
 }
 
-fn show_main_window(app: &tauri::AppHandle) {
-    if let Some(win) = app.get_webview_window("main") {
-        let _ = win.unminimize();
-        let _ = win.show();
-        let _ = win.set_focus();
+fn signal_wake_event() {
+    unsafe {
+        if let Ok(ev) = OpenEventW(EVENT_MODIFY_STATE, false, w!("Local\\PhaseMiXShowEvent")) {
+            let _ = SetEvent(ev);
+            let _ = CloseHandle(ev);
+        }
     }
+}
+
+fn show_main_window(app: &tauri::AppHandle) {
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        if let Some(win) = handle.get_webview_window("main") {
+            let _ = win.unminimize();
+            let _ = win.show();
+            let _ = win.set_focus();
+            return;
+        }
+        if let Some(win_cfg) = handle.config().app.windows.first().cloned() {
+            if let Ok(builder) = WebviewWindowBuilder::from_config(&handle, &win_cfg) {
+                if let Ok(win) = builder.build() {
+                    let _ = win.show();
+                    let _ = win.set_focus();
+                }
+            }
+        }
+    });
 }
 
 pub fn run() {
@@ -264,16 +288,17 @@ pub fn run() {
             set_autostart,
         ])
         .setup(move |app| {
-            if let Some(win_cfg) = app.config().app.windows.first().cloned() {
-                let mut builder = tauri::WebviewWindowBuilder::from_config(app.handle(), &win_cfg)?;
-                if smoke {
-                    let smoke_wv_dir = std::env::temp_dir().join("phasemix_smoke_webview");
-                    let _ = std::fs::create_dir_all(&smoke_wv_dir);
-                    builder = builder.visible(false).data_directory(smoke_wv_dir);
-                } else if start_in_tray {
-                    builder = builder.visible(false);
+            // In --tray silent boot, defer WebView2 creation until user opens tray/app (~6 MB RAM)
+            if !start_in_tray {
+                if let Some(win_cfg) = app.config().app.windows.first().cloned() {
+                    let mut builder = WebviewWindowBuilder::from_config(app.handle(), &win_cfg)?;
+                    if smoke {
+                        let smoke_wv_dir = std::env::temp_dir().join("phasemix_smoke_webview");
+                        let _ = std::fs::create_dir_all(&smoke_wv_dir);
+                        builder = builder.visible(false).data_directory(smoke_wv_dir);
+                    }
+                    builder.build()?;
                 }
-                builder.build()?;
             }
 
             let state = app.state::<AppState>();
@@ -297,35 +322,83 @@ pub fn run() {
                 return Ok(());
             }
 
-            // Build native Windows system tray menu
+            // Build native Windows system tray menu with Sound Presets submenu
             let open_item = MenuItem::with_id(app, "open", "Open PhaseMiX", true, None::<&str>)?;
+            let p_desk = MenuItem::with_id(
+                app,
+                "preset:desk_triangle",
+                "Desk Triangle (Balanced)",
+                true,
+                None::<&str>,
+            )?;
+            let p_cinema = MenuItem::with_id(
+                app,
+                "preset:cinema_center",
+                "Cinema 3.2 Dialogue",
+                true,
+                None::<&str>,
+            )?;
+            let p_music = MenuItem::with_id(
+                app,
+                "preset:wide_room",
+                "Wide Room Music",
+                true,
+                None::<&str>,
+            )?;
+            let p_night = MenuItem::with_id(
+                app,
+                "preset:night_safe",
+                "Night Ear-Safe (-15 dB)",
+                true,
+                None::<&str>,
+            )?;
+            let p_offset =
+                MenuItem::with_id(app, "preset:asym_desk", "Offset Desk", true, None::<&str>)?;
+            let p_flat =
+                MenuItem::with_id(app, "preset:pure_mirror", "Pure Flat", true, None::<&str>)?;
+            let presets_sub = Submenu::with_items(
+                app,
+                "Sound Presets",
+                true,
+                &[&p_desk, &p_cinema, &p_music, &p_night, &p_offset, &p_flat],
+            )?;
             let mute_item =
                 MenuItem::with_id(app, "mute", "Mute / Unmute All", true, None::<&str>)?;
             let sep = PredefinedMenuItem::separator(app)?;
             let quit_item = MenuItem::with_id(app, "quit", "Quit PhaseMiX", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&open_item, &mute_item, &sep, &quit_item])?;
+            let menu = Menu::with_items(
+                app,
+                &[&open_item, &presets_sub, &mute_item, &sep, &quit_item],
+            )?;
 
             let mut tray_builder = TrayIconBuilder::with_id("phasemix-tray")
                 .tooltip("PhaseMiX Audio Console")
                 .menu(&menu)
                 .show_menu_on_left_click(false)
-                .on_menu_event(|app_h, event| match event.id.as_ref() {
-                    "open" => show_main_window(app_h),
-                    "mute" => {
+                .on_menu_event(|app_h, event| {
+                    let id = event.id.as_ref();
+                    if id == "open" {
+                        show_main_window(app_h);
+                    } else if id == "mute" {
                         let st = app_h.state::<AppState>();
                         let cur_mute = st.engine.fast_meters_event().master_mute;
-                        st.engine.update_mixer(MixerPatch {
+                        let updated = st.engine.update_mixer(MixerPatch {
                             master_mute: Some(!cur_mute),
                             ..Default::default()
                         });
-                    }
-                    "quit" => {
+                        let _ = app_h.emit("phasemix:mixer", updated);
+                    } else if let Some(preset_id) = id.strip_prefix("preset:") {
+                        let st = app_h.state::<AppState>();
+                        if let Some(updated) = st.engine.apply_preset(preset_id) {
+                            let _ = app_h.emit("phasemix:mixer", updated);
+                        }
+                    } else if id == "quit" {
                         let st = app_h.state::<AppState>();
                         st.emitter_stop.store(true, Ordering::Relaxed);
+                        signal_wake_event();
                         st.engine.stop();
                         app_h.exit(0);
                     }
-                    _ => {}
                 })
                 .on_tray_icon_event(|tray, event| {
                     if let TrayIconEvent::Click {
@@ -342,6 +415,28 @@ pub fn run() {
                 tray_builder = tray_builder.icon(icon);
             }
             let _ = tray_builder.build(app)?;
+
+            // Listen for single-instance wake event (when launching shortcut while UI is unloaded in tray)
+            let wake_handle = app.handle().clone();
+            let wake_stop = state.emitter_stop.clone();
+            thread::Builder::new()
+                .name("wake-listener".to_string())
+                .spawn(move || unsafe {
+                    if let Ok(ev) =
+                        CreateEventW(None, false, false, w!("Local\\PhaseMiXShowEvent"))
+                    {
+                        while !wake_stop.load(Ordering::Relaxed) {
+                            let wait = WaitForSingleObject(ev, 500);
+                            if wake_stop.load(Ordering::Relaxed) {
+                                break;
+                            }
+                            if wait.0 == 0 {
+                                show_main_window(&wake_handle);
+                            }
+                        }
+                        let _ = CloseHandle(ev);
+                    }
+                })?;
 
             // Push live 30 Hz meter snapshots over WebView2 IPC only while window is visible
             let emit_handle = app.handle().clone();
@@ -372,18 +467,22 @@ pub fn run() {
 
             Ok(())
         })
-        .on_window_event(|window, event| {
-            if let WindowEvent::CloseRequested { api, .. } = event {
-                let st = window.state::<AppState>();
+        .build(tauri::generate_context!())
+        .expect("error while building PhaseMiX")
+        .run(|app_h, event| {
+            // Closing [X] while running unloads WebView2 (~283 MB freed to ~6 MB tray core)
+            if let RunEvent::ExitRequested {
+                code: None, api, ..
+            } = event
+            {
+                let st = app_h.state::<AppState>();
                 if st.engine.is_running() {
-                    api.prevent_close();
-                    let _ = window.hide();
+                    api.prevent_exit();
                 } else {
                     st.emitter_stop.store(true, Ordering::Relaxed);
+                    signal_wake_event();
                     st.engine.stop();
                 }
             }
-        })
-        .run(tauri::generate_context!())
-        .expect("error while running PhaseMiX");
+        });
 }

@@ -89,7 +89,7 @@ export const PillVolumeSlider = memo(function PillVolumeSlider({
           onChange(Math.max(min, clamped - step));
         }
       }}
-      className={`relative h-8 w-full select-none touch-none overflow-hidden rounded-full bg-[#2a2c32] shadow-inner ${
+      className={`relative h-8 w-full select-none touch-none overflow-hidden rounded-full bg-[#2a2c32] shadow-inner outline-none focus-visible:ring-2 focus-visible:ring-white/30 ${
         disabled ? "cursor-not-allowed opacity-45" : "cursor-pointer"
       }`}
     >

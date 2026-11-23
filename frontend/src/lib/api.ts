@@ -66,3 +66,12 @@ export async function subscribeMetersEvent(
     onData(event.payload);
   });
 }
+
+export async function subscribeMixerEvent(
+  onMixer: (mixer: MixerState) => void
+): Promise<() => void> {
+  if (!IS_TAURI) return () => {};
+  return await listen<MixerState>("phasemix:mixer", (event) => {
+    onMixer(event.payload);
+  });
+}

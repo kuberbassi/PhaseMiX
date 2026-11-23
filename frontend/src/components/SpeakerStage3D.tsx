@@ -290,8 +290,13 @@ export const SpeakerStage3D = memo(function SpeakerStage3D({
     const onUp = () => {
       dragging = false;
     };
+    const onDblClick = () => {
+      yaw = 0.0;
+      pitch = 0.56;
+    };
     const dom = renderer.domElement;
     dom.addEventListener("pointerdown", onDown);
+    dom.addEventListener("dblclick", onDblClick);
     window.addEventListener("pointermove", onMove, { passive: true });
     window.addEventListener("pointerup", onUp, { passive: true });
 
@@ -326,9 +331,10 @@ export const SpeakerStage3D = memo(function SpeakerStage3D({
 
       const m = telemetryStore.getSnapshot().meters;
       const mx = mixerRef.current;
-      const ampI = mx.master_mute || mx.intex_mute ? 0 : dbToAmp(m.intex_db);
-      const ampB = mx.master_mute || mx.boat_mute ? 0 : dbToAmp(m.boat_db);
-      const ampL = mx.master_mute || mx.laptop_mute ? 0 : dbToAmp(m.laptop_db);
+      const solo = mx.solo;
+      const ampI = mx.master_mute || mx.intex_mute || (solo !== null && solo !== "intex") ? 0 : dbToAmp(m.intex_db);
+      const ampB = mx.master_mute || mx.boat_mute || (solo !== null && solo !== "boat") ? 0 : dbToAmp(m.boat_db);
+      const ampL = mx.master_mute || mx.laptop_mute || (solo !== null && solo !== "laptop") ? 0 : dbToAmp(m.laptop_db);
 
       const preset = POSITION_PRESETS.find((p) => p.id === mx.position_preset) ?? POSITION_PRESETS[0];
       const L = preset.layout;
@@ -419,6 +425,7 @@ export const SpeakerStage3D = memo(function SpeakerStage3D({
       ro.disconnect();
       io.disconnect();
       dom.removeEventListener("pointerdown", onDown);
+      dom.removeEventListener("dblclick", onDblClick);
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
       geometries.forEach((g) => g.dispose());
@@ -433,7 +440,7 @@ export const SpeakerStage3D = memo(function SpeakerStage3D({
       <div ref={mountRef} className="h-full w-full cursor-grab active:cursor-grabbing" />
       <div className="pointer-events-none absolute top-3 left-3 flex items-center gap-2">
         <span className="rounded-md border border-white/[0.08] bg-black/50 px-2.5 py-1 text-[11px] font-medium text-zinc-300">
-          3D Room Stage • Drag to orbit
+          3D Room Stage • Drag to orbit · Double-click reset
         </span>
       </div>
     </div>
