@@ -36,11 +36,11 @@ flowchart LR
 
 | Feature | What It Does | Specs |
 | :--- | :--- | :--- |
-| **Phase & Delay Sync** | Delays wired/internal speakers + mic FM chirp auto-align & AUX/PC link | `0 – 450 ms`, `±2 ms` step, mic cross-correlation align |
+| **Phase & Delay Sync** | Delays wired/internal speakers + 2-burst mic chirp align & link | `0 – 450 ms`, `±2 ms` step, Catmull-Rom drift sync, preserved across presets |
 | **3-Band EQ + Live Curve** | Real-time 20 Hz–20 kHz curve, bass/mids/treble & crossovers per output | `110 Hz` · `1 kHz` · `4.5 kHz` (`±12 dB`), `HPF`/`LPF` |
 | **Ear-Safe Protection** | Prevents sudden system volume blasts or clipping | Master cap (`15–200%`), C¹ limiter (`-6 dB` day / `-15 dB` night), `50%` Win cap |
 | **Interactive 3D Stage & Presets** | Width/balance/phase physics, click-to-solo, live laptop meters, compact mode | `Desk Triangle`, `Cinema 3.2`, `Wide Room`, `Night Safe`, Import/Export `.json` |
-| **Windows Integration** | Hot-plug BT refresh, hotkeys, live tray telemetry, MMCSS, ~6 MB boot | `Ctrl+Alt+M/P/N`, default-output guard, `IAudioEndpointVolume`, `--tray` |
+| **Windows Integration** | Hot-plug BT refresh, anti-tear buffers, hotkeys, tray, ~6 MB boot | `Ctrl+Alt+M/P/N`, `45 ms` BT / `25 ms` wired slack, `IAudioEndpointVolume` |
 
 ---
 

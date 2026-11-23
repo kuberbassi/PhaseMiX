@@ -42,6 +42,7 @@ export interface MixerState {
 
   solo: Role | null;
   test_mode: "off" | "click" | "chirp" | "lr";
+  calibrated_delay_ms?: number | null;
 }
 
 export interface DeviceInfo {
@@ -151,11 +152,11 @@ export const POSITION_PRESETS: PositionPreset[] = [
       position_preset: "desk_triangle",
       protection_max_master: 60,
       protection_ceiling_db: -6,
-      intex_vol: 100, intex_balance: 0, intex_width: 106, intex_delay_ms: 224,
+      intex_vol: 100, intex_balance: 0, intex_width: 106,
       intex_bass_db: 0.5, intex_mid_db: -2.0, intex_treble_db: 0.5,
-      boat_vol: 60, boat_mode: "vocal_mid", boat_delay_ms: 0, boat_hpf_hz: 260, boat_lpf_hz: 14000,
+      boat_vol: 60, boat_mode: "vocal_mid", boat_hpf_hz: 260, boat_lpf_hz: 14000,
       boat_bass_db: -2.5, boat_mid_db: 2.0, boat_treble_db: 0.5,
-      laptop_vol: 125, laptop_mode: "stereo", laptop_delay_ms: 224, laptop_hpf_hz: 300, laptop_lpf_hz: 18000,
+      laptop_vol: 125, laptop_mode: "stereo", laptop_hpf_hz: 300, laptop_lpf_hz: 18000,
       laptop_bass_db: -2.0, laptop_mid_db: 0.0, laptop_treble_db: 2.0,
     },
     layout: {
@@ -176,11 +177,11 @@ export const POSITION_PRESETS: PositionPreset[] = [
       position_preset: "cinema_center",
       protection_max_master: 60,
       protection_ceiling_db: -6,
-      intex_vol: 100, intex_balance: 0, intex_width: 135, intex_delay_ms: 224,
+      intex_vol: 100, intex_balance: 0, intex_width: 135,
       intex_bass_db: 2.5, intex_mid_db: -3.5, intex_treble_db: 0.0,
-      boat_vol: 72, boat_mode: "vocal_mid", boat_delay_ms: 0, boat_hpf_hz: 220, boat_lpf_hz: 12000,
+      boat_vol: 72, boat_mode: "vocal_mid", boat_hpf_hz: 220, boat_lpf_hz: 12000,
       boat_bass_db: -3.0, boat_mid_db: 3.5, boat_treble_db: 1.0,
-      laptop_vol: 120, laptop_mode: "side_ambience", laptop_delay_ms: 224, laptop_hpf_hz: 340, laptop_lpf_hz: 15000,
+      laptop_vol: 120, laptop_mode: "side_ambience", laptop_hpf_hz: 340, laptop_lpf_hz: 15000,
       laptop_bass_db: -3.0, laptop_mid_db: 0.0, laptop_treble_db: 2.0,
     },
     layout: {
@@ -201,11 +202,11 @@ export const POSITION_PRESETS: PositionPreset[] = [
       position_preset: "wide_room",
       protection_max_master: 60,
       protection_ceiling_db: -6,
-      intex_vol: 110, intex_balance: 0, intex_width: 120, intex_delay_ms: 224,
+      intex_vol: 110, intex_balance: 0, intex_width: 120,
       intex_bass_db: 4.0, intex_mid_db: 0.0, intex_treble_db: 1.5,
-      boat_vol: 75, boat_mode: "mono_center", boat_delay_ms: 0, boat_hpf_hz: 185, boat_lpf_hz: 17500,
+      boat_vol: 75, boat_mode: "mono_center", boat_hpf_hz: 185, boat_lpf_hz: 17500,
       boat_bass_db: 0.0, boat_mid_db: 1.5, boat_treble_db: 1.5,
-      laptop_vol: 160, laptop_mode: "stereo", laptop_delay_ms: 224, laptop_hpf_hz: 250, laptop_lpf_hz: 18000,
+      laptop_vol: 160, laptop_mode: "stereo", laptop_hpf_hz: 250, laptop_lpf_hz: 18000,
       laptop_bass_db: 0.0, laptop_mid_db: 1.0, laptop_treble_db: 2.0,
     },
     layout: {
@@ -227,11 +228,11 @@ export const POSITION_PRESETS: PositionPreset[] = [
       protection_enabled: true,
       protection_max_master: 60,
       protection_ceiling_db: -15.0,
-      intex_vol: 75, intex_balance: 0, intex_width: 95, intex_delay_ms: 224,
+      intex_vol: 75, intex_balance: 0, intex_width: 95,
       intex_bass_db: -5.0, intex_mid_db: 0.0, intex_treble_db: -2.0,
-      boat_vol: 65, boat_mode: "vocal_mid", boat_delay_ms: 0, boat_hpf_hz: 240, boat_lpf_hz: 10000,
+      boat_vol: 65, boat_mode: "vocal_mid", boat_hpf_hz: 240, boat_lpf_hz: 10000,
       boat_bass_db: -2.5, boat_mid_db: 2.0, boat_treble_db: -1.5,
-      laptop_vol: 80, laptop_mode: "stereo", laptop_delay_ms: 224, laptop_hpf_hz: 280, laptop_lpf_hz: 12000,
+      laptop_vol: 80, laptop_mode: "stereo", laptop_hpf_hz: 280, laptop_lpf_hz: 12000,
       laptop_bass_db: -3.0, laptop_mid_db: 1.0, laptop_treble_db: -2.0,
     },
     layout: {
@@ -252,11 +253,11 @@ export const POSITION_PRESETS: PositionPreset[] = [
       position_preset: "asym_desk",
       protection_max_master: 60,
       protection_ceiling_db: -6,
-      intex_vol: 100, intex_balance: 18, intex_width: 105, intex_delay_ms: 224,
+      intex_vol: 100, intex_balance: 18, intex_width: 105,
       intex_bass_db: 1.0, intex_mid_db: -1.5, intex_treble_db: 0.5,
-      boat_vol: 65, boat_mode: "vocal_mid", boat_delay_ms: 0, boat_hpf_hz: 280, boat_lpf_hz: 16000,
+      boat_vol: 65, boat_mode: "vocal_mid", boat_hpf_hz: 280, boat_lpf_hz: 16000,
       boat_bass_db: -2.0, boat_mid_db: 2.0, boat_treble_db: 1.0,
-      laptop_vol: 165, laptop_mode: "stereo", laptop_delay_ms: 224, laptop_hpf_hz: 260, laptop_lpf_hz: 18000,
+      laptop_vol: 165, laptop_mode: "stereo", laptop_hpf_hz: 260, laptop_lpf_hz: 18000,
       laptop_bass_db: -1.0, laptop_mid_db: 0.5, laptop_treble_db: 1.5,
     },
     layout: {
@@ -277,11 +278,11 @@ export const POSITION_PRESETS: PositionPreset[] = [
       position_preset: "pure_mirror",
       protection_max_master: 60,
       protection_ceiling_db: -6,
-      intex_vol: 100, intex_balance: 0, intex_width: 100, intex_delay_ms: 224,
+      intex_vol: 100, intex_balance: 0, intex_width: 100,
       intex_bass_db: 0.0, intex_mid_db: 0.0, intex_treble_db: 0.0,
-      boat_vol: 65, boat_mode: "stereo", boat_delay_ms: 0, boat_hpf_hz: 0, boat_lpf_hz: 18000,
+      boat_vol: 65, boat_mode: "stereo", boat_hpf_hz: 0, boat_lpf_hz: 18000,
       boat_bass_db: 0.0, boat_mid_db: 0.0, boat_treble_db: 0.0,
-      laptop_vol: 130, laptop_mode: "stereo", laptop_delay_ms: 224, laptop_hpf_hz: 220, laptop_lpf_hz: 18000,
+      laptop_vol: 130, laptop_mode: "stereo", laptop_hpf_hz: 220, laptop_lpf_hz: 18000,
       laptop_bass_db: 0.0, laptop_mid_db: 0.0, laptop_treble_db: 0.0,
     },
     layout: {

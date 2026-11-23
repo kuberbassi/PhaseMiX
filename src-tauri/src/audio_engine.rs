@@ -24,8 +24,8 @@ use windows::Win32::System::Threading::{
 };
 
 use crate::dsp::{
-    block_db, find_chirp_arrival, generate_cal_chirp, AuxChannelProcessor, AuxMode, AuxParams,
-    PrimaryParams, PrimaryProcessor, TestMode, TestSignalGenerator,
+    block_db, find_chirp_arrival, generate_cal_chirp_pair, AuxChannelProcessor, AuxMode,
+    AuxParams, PrimaryParams, PrimaryProcessor, TestMode, TestSignalGenerator,
 };
 
 pub const MASTER_RATE: u32 = 48_000;
@@ -105,6 +105,7 @@ pub struct MixerState {
 
     pub solo: Option<String>,
     pub test_mode: String,
+    pub calibrated_delay_ms: Option<f64>,
 }
 
 impl Default for MixerState {
@@ -146,6 +147,7 @@ impl Default for MixerState {
             laptop_invert: false,
             solo: None,
             test_mode: "off".to_string(),
+            calibrated_delay_ms: None,
         }
     }
 }
@@ -159,13 +161,11 @@ pub fn preset_patch(id: &str) -> Option<MixerPatch> {
             intex_vol: Some(100.0),
             intex_balance: Some(0.0),
             intex_width: Some(106.0),
-            intex_delay_ms: Some(224.0),
             intex_bass_db: Some(0.5),
             intex_mid_db: Some(-2.0),
             intex_treble_db: Some(0.5),
             boat_vol: Some(60.0),
             boat_mode: Some("vocal_mid".into()),
-            boat_delay_ms: Some(0.0),
             boat_hpf_hz: Some(260.0),
             boat_lpf_hz: Some(14000.0),
             boat_bass_db: Some(-2.5),
@@ -173,7 +173,6 @@ pub fn preset_patch(id: &str) -> Option<MixerPatch> {
             boat_treble_db: Some(0.5),
             laptop_vol: Some(125.0),
             laptop_mode: Some("stereo".into()),
-            laptop_delay_ms: Some(224.0),
             laptop_hpf_hz: Some(300.0),
             laptop_lpf_hz: Some(18000.0),
             laptop_bass_db: Some(-2.0),
@@ -188,13 +187,11 @@ pub fn preset_patch(id: &str) -> Option<MixerPatch> {
             intex_vol: Some(100.0),
             intex_balance: Some(0.0),
             intex_width: Some(135.0),
-            intex_delay_ms: Some(224.0),
             intex_bass_db: Some(2.5),
             intex_mid_db: Some(-3.5),
             intex_treble_db: Some(0.0),
             boat_vol: Some(72.0),
             boat_mode: Some("vocal_mid".into()),
-            boat_delay_ms: Some(0.0),
             boat_hpf_hz: Some(220.0),
             boat_lpf_hz: Some(12000.0),
             boat_bass_db: Some(-3.0),
@@ -202,7 +199,6 @@ pub fn preset_patch(id: &str) -> Option<MixerPatch> {
             boat_treble_db: Some(1.0),
             laptop_vol: Some(120.0),
             laptop_mode: Some("side_ambience".into()),
-            laptop_delay_ms: Some(224.0),
             laptop_hpf_hz: Some(340.0),
             laptop_lpf_hz: Some(15000.0),
             laptop_bass_db: Some(-3.0),
@@ -217,13 +213,11 @@ pub fn preset_patch(id: &str) -> Option<MixerPatch> {
             intex_vol: Some(110.0),
             intex_balance: Some(0.0),
             intex_width: Some(120.0),
-            intex_delay_ms: Some(224.0),
             intex_bass_db: Some(4.0),
             intex_mid_db: Some(0.0),
             intex_treble_db: Some(1.5),
             boat_vol: Some(75.0),
             boat_mode: Some("mono_center".into()),
-            boat_delay_ms: Some(0.0),
             boat_hpf_hz: Some(185.0),
             boat_lpf_hz: Some(17500.0),
             boat_bass_db: Some(0.0),
@@ -231,7 +225,6 @@ pub fn preset_patch(id: &str) -> Option<MixerPatch> {
             boat_treble_db: Some(1.5),
             laptop_vol: Some(160.0),
             laptop_mode: Some("stereo".into()),
-            laptop_delay_ms: Some(224.0),
             laptop_hpf_hz: Some(250.0),
             laptop_lpf_hz: Some(18000.0),
             laptop_bass_db: Some(0.0),
@@ -247,13 +240,11 @@ pub fn preset_patch(id: &str) -> Option<MixerPatch> {
             intex_vol: Some(75.0),
             intex_balance: Some(0.0),
             intex_width: Some(95.0),
-            intex_delay_ms: Some(224.0),
             intex_bass_db: Some(-5.0),
             intex_mid_db: Some(0.0),
             intex_treble_db: Some(-2.0),
             boat_vol: Some(65.0),
             boat_mode: Some("vocal_mid".into()),
-            boat_delay_ms: Some(0.0),
             boat_hpf_hz: Some(240.0),
             boat_lpf_hz: Some(10000.0),
             boat_bass_db: Some(-2.5),
@@ -261,7 +252,6 @@ pub fn preset_patch(id: &str) -> Option<MixerPatch> {
             boat_treble_db: Some(-1.5),
             laptop_vol: Some(80.0),
             laptop_mode: Some("stereo".into()),
-            laptop_delay_ms: Some(224.0),
             laptop_hpf_hz: Some(280.0),
             laptop_lpf_hz: Some(12000.0),
             laptop_bass_db: Some(-3.0),
@@ -276,13 +266,11 @@ pub fn preset_patch(id: &str) -> Option<MixerPatch> {
             intex_vol: Some(100.0),
             intex_balance: Some(18.0),
             intex_width: Some(105.0),
-            intex_delay_ms: Some(224.0),
             intex_bass_db: Some(1.0),
             intex_mid_db: Some(-1.5),
             intex_treble_db: Some(0.5),
             boat_vol: Some(65.0),
             boat_mode: Some("vocal_mid".into()),
-            boat_delay_ms: Some(0.0),
             boat_hpf_hz: Some(280.0),
             boat_lpf_hz: Some(16000.0),
             boat_bass_db: Some(-2.0),
@@ -290,7 +278,6 @@ pub fn preset_patch(id: &str) -> Option<MixerPatch> {
             boat_treble_db: Some(1.0),
             laptop_vol: Some(165.0),
             laptop_mode: Some("stereo".into()),
-            laptop_delay_ms: Some(224.0),
             laptop_hpf_hz: Some(260.0),
             laptop_lpf_hz: Some(18000.0),
             laptop_bass_db: Some(-1.0),
@@ -305,13 +292,11 @@ pub fn preset_patch(id: &str) -> Option<MixerPatch> {
             intex_vol: Some(100.0),
             intex_balance: Some(0.0),
             intex_width: Some(100.0),
-            intex_delay_ms: Some(224.0),
             intex_bass_db: Some(0.0),
             intex_mid_db: Some(0.0),
             intex_treble_db: Some(0.0),
             boat_vol: Some(65.0),
             boat_mode: Some("stereo".into()),
-            boat_delay_ms: Some(0.0),
             boat_hpf_hz: Some(0.0),
             boat_lpf_hz: Some(18000.0),
             boat_bass_db: Some(0.0),
@@ -319,7 +304,6 @@ pub fn preset_patch(id: &str) -> Option<MixerPatch> {
             boat_treble_db: Some(0.0),
             laptop_vol: Some(130.0),
             laptop_mode: Some("stereo".into()),
-            laptop_delay_ms: Some(224.0),
             laptop_hpf_hz: Some(220.0),
             laptop_lpf_hz: Some(18000.0),
             laptop_bass_db: Some(0.0),
@@ -699,13 +683,15 @@ impl SharedRing {
             return;
         }
         let w = self.write_idx;
+        let max_age = (RING_FRAMES - 128) as u64;
         if (step - 1.0).abs() < 1e-6 && (read_pos - read_pos.round()).abs() < 0.05 {
             let idx_start = read_pos.round().max(0.0) as u64;
-            let avail = w.saturating_sub(idx_start).min(out_frames as u64) as usize;
-            if avail == 0 {
+            let age = w.saturating_sub(idx_start);
+            if age == 0 || age >= max_age {
                 out.fill([0.0, 0.0]);
                 return;
             }
+            let avail = age.min(out_frames as u64) as usize;
             let s = (idx_start as usize) % RING_FRAMES;
             let first = avail.min(RING_FRAMES - s);
             out[..first].copy_from_slice(&self.buf[s..s + first]);
@@ -718,23 +704,39 @@ impl SharedRing {
             return;
         }
 
+        let min_pos = w.saturating_sub(max_age) as f64;
         let w_lim = w.saturating_sub(1) as f64;
+        let hermite_lim = w.saturating_sub(2) as f64;
         for (i, frame) in out.iter_mut().enumerate() {
             let pos = read_pos + (i as f64) * step;
-            if pos < 0.0 || pos >= w_lim {
+            if pos < min_pos || pos >= w_lim {
                 *frame = [0.0, 0.0];
                 continue;
             }
-            let idx0 = pos.floor() as usize;
-            let frac = (pos - idx0 as f64) as f32;
-            let i0 = idx0 % RING_FRAMES;
-            let i1 = (idx0 + 1) % RING_FRAMES;
-            let s0 = self.buf[i0];
-            let s1 = self.buf[i1];
-            *frame = [
-                s0[0] + (s1[0] - s0[0]) * frac,
-                s0[1] + (s1[1] - s0[1]) * frac,
-            ];
+            let idx1 = pos.floor() as usize;
+            let t = (pos - idx1 as f64) as f32;
+            if pos >= min_pos + 1.0 && pos < hermite_lim && idx1 >= 1 {
+                let s0 = self.buf[(idx1 - 1) % RING_FRAMES];
+                let s1 = self.buf[idx1 % RING_FRAMES];
+                let s2 = self.buf[(idx1 + 1) % RING_FRAMES];
+                let s3 = self.buf[(idx1 + 2) % RING_FRAMES];
+                let t2 = t * t;
+                let t3 = t2 * t;
+                let interp = |y0: f32, y1: f32, y2: f32, y3: f32| -> f32 {
+                    0.5 * ((2.0 * y1)
+                        + (-y0 + y2) * t
+                        + (2.0 * y0 - 5.0 * y1 + 4.0 * y2 - y3) * t2
+                        + (-y0 + 3.0 * y1 - 3.0 * y2 + y3) * t3)
+                };
+                *frame = [
+                    interp(s0[0], s1[0], s2[0], s3[0]),
+                    interp(s0[1], s1[1], s2[1], s3[1]),
+                ];
+            } else {
+                let s1 = self.buf[idx1 % RING_FRAMES];
+                let s2 = self.buf[(idx1 + 1) % RING_FRAMES];
+                *frame = [s1[0] + (s2[0] - s1[0]) * t, s1[1] + (s2[1] - s1[1]) * t];
+            }
         }
     }
 }
@@ -1091,8 +1093,12 @@ struct CalibrationSync {
     active: AtomicBool,
     s0: AtomicU64,
     s1: AtomicU64,
-    bt_lag_samples: AtomicU64,
-    aux_lag_samples: AtomicU64,
+    s2: AtomicU64,
+    s3: AtomicU64,
+    bt1_lag: AtomicU64,
+    aux1_lag: AtomicU64,
+    bt2_lag: AtomicU64,
+    aux2_lag: AtomicU64,
 }
 
 impl Default for CalibrationSync {
@@ -1101,8 +1107,12 @@ impl Default for CalibrationSync {
             active: AtomicBool::new(false),
             s0: AtomicU64::new(0),
             s1: AtomicU64::new(0),
-            bt_lag_samples: AtomicU64::new(0),
-            aux_lag_samples: AtomicU64::new(0),
+            s2: AtomicU64::new(0),
+            s3: AtomicU64::new(0),
+            bt1_lag: AtomicU64::new(0),
+            aux1_lag: AtomicU64::new(0),
+            bt2_lag: AtomicU64::new(0),
+            aux2_lag: AtomicU64::new(0),
         }
     }
 }
@@ -1529,67 +1539,81 @@ impl AudioRouterEngine {
             };
         }
 
-        let chirp = generate_cal_chirp(MASTER_RATE_F64);
-        let w_base = self.inner.ring.lock().write_idx;
-        let s0 = w_base + (MASTER_RATE as u64 * 35) / 100; // +350 ms
-        let s1 = s0 + MASTER_RATE as u64; // +1000 ms after s0
-        self.inner.cal.s0.store(s0, Ordering::SeqCst);
-        self.inner.cal.s1.store(s1, Ordering::SeqCst);
-        self.inner.cal.bt_lag_samples.store(0, Ordering::SeqCst);
-        self.inner.cal.aux_lag_samples.store(0, Ordering::SeqCst);
-        self.inner.cal.active.store(true, Ordering::SeqCst);
-        let _cal_guard = CalGuard(&self.inner.cal);
-
+        let (chirp_cos, chirp_sin) = generate_cal_chirp_pair(MASTER_RATE_F64);
         let frame_bytes =
             (fmt.get_nchannels().max(1) as usize) * ((fmt.get_bitspersample() / 8).max(1) as usize);
         let mut raw_bytes: Vec<u8> = Vec::with_capacity(48_000);
         let mut scratch_stereo: Vec<[f32; 2]> = Vec::with_capacity(2048);
         let mut out_48k: Vec<[f32; 2]> = Vec::with_capacity(2048);
-        let mut mono: Vec<f32> = Vec::with_capacity(MASTER_RATE as usize * 3);
+        let mut mono: Vec<f32> = Vec::with_capacity(MASTER_RATE as usize * 4);
 
-        let target_samples = (MASTER_RATE as usize * 255) / 100; // 2.55 s window
-        let start_t = Instant::now();
-        while mono.len() < target_samples && start_t.elapsed() < Duration::from_millis(2950) {
-            if let Some(ref ev) = h_event {
-                let _ = ev.wait_for_event(20);
-            } else {
-                thread::sleep(Duration::from_millis(10));
-            }
-            loop {
-                let pkt = cap_client.get_next_packet_size().unwrap_or(Some(0)).unwrap_or(0);
-                if pkt == 0 {
-                    break;
+        let mut drain_mic = |dst: &mut Vec<f32>, target_len: usize, max_wait: Duration| {
+            let t0 = Instant::now();
+            while dst.len() < target_len && t0.elapsed() < max_wait {
+                if let Some(ref ev) = h_event {
+                    let _ = ev.wait_for_event(20);
+                } else {
+                    thread::sleep(Duration::from_millis(10));
                 }
-                let needed = (pkt as usize) * frame_bytes;
-                if raw_bytes.len() < needed {
-                    raw_bytes.resize(needed, 0);
-                }
-                match cap_client.read_from_device(&mut raw_bytes[..needed]) {
-                    Ok((read_n, info)) if read_n > 0 => {
-                        if info.flags.silent {
-                            let add = (read_n as usize).min(4096);
-                            mono.resize(mono.len() + add, 0.0);
-                        } else {
-                            let bytes_read = (read_n as usize) * frame_bytes;
-                            decode_bytes_to_stereo_48k(
-                                &raw_bytes[..bytes_read],
-                                &fmt,
-                                &mut scratch_stereo,
-                                &mut out_48k,
-                            );
-                            for f in &out_48k {
-                                mono.push(0.5 * (f[0] + f[1]));
+                loop {
+                    let pkt = cap_client.get_next_packet_size().unwrap_or(Some(0)).unwrap_or(0);
+                    if pkt == 0 {
+                        break;
+                    }
+                    let needed = (pkt as usize) * frame_bytes;
+                    if raw_bytes.len() < needed {
+                        raw_bytes.resize(needed, 0);
+                    }
+                    match cap_client.read_from_device(&mut raw_bytes[..needed]) {
+                        Ok((read_n, info)) if read_n > 0 => {
+                            if info.flags.silent {
+                                let add = (read_n as usize).min(4096);
+                                dst.resize(dst.len() + add, 0.0);
+                            } else {
+                                let bytes_read = (read_n as usize) * frame_bytes;
+                                decode_bytes_to_stereo_48k(
+                                    &raw_bytes[..bytes_read],
+                                    &fmt,
+                                    &mut scratch_stereo,
+                                    &mut out_48k,
+                                );
+                                for f in &out_48k {
+                                    dst.push(0.5 * (f[0] + f[1]));
+                                }
                             }
                         }
+                        _ => break,
                     }
-                    _ => break,
                 }
             }
-        }
+        };
+
+        // Drain 160 ms cold-start mic frames before scheduling chirps so windows start deterministic
+        drain_mic(&mut mono, (MASTER_RATE as usize * 16) / 100, Duration::from_millis(450));
+        mono.clear();
+
+        let w_base = self.inner.ring.lock().write_idx;
+        let s0 = w_base + (MASTER_RATE as u64 * 18) / 100; // +180 ms: BT 1
+        let s1 = w_base + (MASTER_RATE as u64 * 98) / 100; // +980 ms: AUX 1
+        let s2 = w_base + (MASTER_RATE as u64 * 175) / 100; // +1750 ms: BT 2
+        let s3 = w_base + (MASTER_RATE as u64 * 255) / 100; // +2550 ms: AUX 2
+        self.inner.cal.s0.store(s0, Ordering::SeqCst);
+        self.inner.cal.s1.store(s1, Ordering::SeqCst);
+        self.inner.cal.s2.store(s2, Ordering::SeqCst);
+        self.inner.cal.s3.store(s3, Ordering::SeqCst);
+        self.inner.cal.bt1_lag.store(0, Ordering::SeqCst);
+        self.inner.cal.aux1_lag.store(0, Ordering::SeqCst);
+        self.inner.cal.bt2_lag.store(0, Ordering::SeqCst);
+        self.inner.cal.aux2_lag.store(0, Ordering::SeqCst);
+        self.inner.cal.active.store(true, Ordering::SeqCst);
+        let _cal_guard = CalGuard(&self.inner.cal);
+
+        let target_samples = (MASTER_RATE as usize * 305) / 100; // 3.05 s capture
+        drain_mic(&mut mono, target_samples, Duration::from_millis(3500));
         let _ = client.stop_stream();
         self.inner.cal.active.store(false, Ordering::SeqCst);
 
-        if mono.len() < MASTER_RATE as usize * 2 {
+        if mono.len() < (MASTER_RATE as usize * 27) / 10 {
             return CalibrationResult {
                 ok: false,
                 measured_ms: 0.0,
@@ -1599,53 +1623,93 @@ impl AudioRouterEngine {
             };
         }
 
-        let mid_split = (MASTER_RATE as usize * 115) / 100; // 1.15 s splits BT chirp & AUX chirp cleanly
-        let w1 = find_chirp_arrival(&mono, &chirp, 0, mid_split.min(mono.len()));
-        let w2 = find_chirp_arrival(&mono, &chirp, mid_split.min(mono.len()), mono.len());
-
-        let (Some((p1, c1)), Some((p2, c2))) = (w1, w2) else {
+        let bt1_lag = self.inner.cal.bt1_lag.load(Ordering::Relaxed);
+        let aux1_lag = self.inner.cal.aux1_lag.load(Ordering::Relaxed);
+        let bt2_lag = self.inner.cal.bt2_lag.load(Ordering::Relaxed);
+        let aux2_lag = self.inner.cal.aux2_lag.load(Ordering::Relaxed);
+        if bt1_lag == 0 || aux1_lag == 0 || bt2_lag == 0 || aux2_lag == 0 {
             return CalibrationResult {
                 ok: false,
                 measured_ms: 0.0,
                 confidence: 0.0,
-                message: "Could not hear both speakers — verify BT & AUX are unmuted".to_string(),
+                message: "A speaker did not output the calibration burst — check connection".to_string(),
+                status: self.status_payload(),
+            };
+        }
+
+        let b1_end = ((MASTER_RATE as usize * 88) / 100).min(mono.len());
+        let a1_end = ((MASTER_RATE as usize * 162) / 100).min(mono.len());
+        let b2_end = ((MASTER_RATE as usize * 244) / 100).min(mono.len());
+
+        let w_bt1 = find_chirp_arrival(&mono, &chirp_cos, &chirp_sin, 0, b1_end);
+        let w_aux1 = find_chirp_arrival(&mono, &chirp_cos, &chirp_sin, b1_end, a1_end);
+        let w_bt2 = find_chirp_arrival(&mono, &chirp_cos, &chirp_sin, a1_end, b2_end);
+        let w_aux2 = find_chirp_arrival(&mono, &chirp_cos, &chirp_sin, b2_end, mono.len());
+
+        let (Some((p_bt1, s_bt1)), Some((p_aux1, s_aux1)), Some((p_bt2, s_bt2)), Some((p_aux2, s_aux2))) =
+            (w_bt1, w_aux1, w_bt2, w_aux2)
+        else {
+            return CalibrationResult {
+                ok: false,
+                measured_ms: 0.0,
+                confidence: 0.0,
+                message: "Could not detect all 4 chirps — keep room quiet and speakers unmuted"
+                    .to_string(),
                 status: self.status_payload(),
             };
         };
 
-        let conf = c1.min(c2);
-        if conf < 0.25 {
+        let min_snr = s_bt1.min(s_aux1).min(s_bt2).min(s_aux2);
+        if min_snr < 4.0 {
             return CalibrationResult {
                 ok: false,
                 measured_ms: 0.0,
-                confidence: (conf * 100.0).round(),
-                message: "Room too noisy or speakers too quiet — raise level slightly and retry"
+                confidence: 0.0,
+                message: "Room too noisy or speakers too quiet — raise speaker level slightly"
                     .to_string(),
                 status: self.status_payload(),
             };
         }
 
-        let delta_ring = (s1 - s0) as f64;
-        let bt_lag = self.inner.cal.bt_lag_samples.load(Ordering::Relaxed) as f64;
-        let aux_lag = self.inner.cal.aux_lag_samples.load(Ordering::Relaxed) as f64;
-        let raw_delay = ((p1 - (p2 - delta_ring)) + (aux_lag - bt_lag)) / (MASTER_RATE_F64 / 1000.0);
-        let measured_ms = raw_delay.round().clamp(0.0, 450.0);
+        let ms_scale = MASTER_RATE_F64 / 1000.0;
+        let d1_ms = ((p_bt1 - (p_aux1 - (s1 - s0) as f64)) + (aux1_lag as f64 - bt1_lag as f64))
+            / ms_scale;
+        let d2_ms = ((p_bt2 - (p_aux2 - (s3 - s2) as f64)) + (aux2_lag as f64 - bt2_lag as f64))
+            / ms_scale;
+        let spread = (d1_ms - d2_ms).abs();
+        if spread > 18.0 {
+            return CalibrationResult {
+                ok: false,
+                measured_ms: 0.0,
+                confidence: 0.0,
+                message: format!(
+                    "Unstable mic echo (±{:.0} ms spread) — move mic closer & retry",
+                    spread.round()
+                ),
+                status: self.status_payload(),
+            };
+        }
+
+        let measured_ms = ((d1_ms + d2_ms) * 0.5).round().clamp(0.0, 450.0);
 
         {
             let mut m = self.inner.mixer.write();
             m.intex_delay_ms = measured_ms;
             m.laptop_delay_ms = measured_ms;
+            m.calibrated_delay_ms = Some(measured_ms);
         }
         Self::save_config_now(&self.inner);
 
+        let spread_i = spread.round();
         CalibrationResult {
             ok: true,
             measured_ms,
-            confidence: (conf * 100.0).round(),
-            message: format!(
-                "Aligned AUX & Built-in to {measured_ms:.0} ms ({:.0}% match)",
-                conf * 100.0
-            ),
+            confidence: spread_i,
+            message: if spread_i < 1.0 {
+                format!("Aligned AUX & Built-in to {measured_ms:.0} ms")
+            } else {
+                format!("Aligned AUX & Built-in to {measured_ms:.0} ms (±{spread_i:.0} ms)")
+            },
             status: self.status_payload(),
         }
     }
@@ -1915,17 +1979,17 @@ fn open_loopback_or_capture(
     dev: &Device,
 ) -> Result<(AudioClient, WaveFormat, Option<wasapi::Handle>), String> {
     let mut client = dev.get_iaudioclient().map_err(|e| format!("{e}"))?;
-    let (def_period, min_period) = client.get_device_period().unwrap_or((100_000, 100_000));
+    let (def_period, _min_period) = client.get_device_period().unwrap_or((100_000, 100_000));
     let desired = WaveFormat::new(32, 32, SampleType::Float, MASTER_RATE as usize, 2, None);
 
-    // 1. Try low-jitter EventsShared + autoconvert directly at 48 kHz float stereo
+    // 1. Try low-jitter EventsShared + autoconvert directly at 48 kHz float stereo (35 ms headroom)
     if client
         .initialize_client(
             &desired,
             Direction::Capture,
             StreamMode::EventsShared {
                 autoconvert: true,
-                buffer_duration_hns: min_period.max(100_000),
+                buffer_duration_hns: def_period.max(350_000),
             },
             None,
         )
@@ -1944,7 +2008,7 @@ fn open_loopback_or_capture(
             Direction::Capture,
             StreamMode::PollingShared {
                 autoconvert: false,
-                buffer_duration_hns: def_period.max(200_000),
+                buffer_duration_hns: def_period.max(400_000),
             },
             None,
         )
@@ -1956,7 +2020,7 @@ fn run_capture_pump(inner: Arc<EngineInner>, device_id: String) {
     ensure_com();
     let _prio_guard = elevate_audio_thread();
     let mut sig_gen = TestSignalGenerator::new(MASTER_RATE_F64);
-    let cal_chirp = generate_cal_chirp(MASTER_RATE_F64);
+    let (cal_chirp, _) = generate_cal_chirp_pair(MASTER_RATE_F64);
     let silence = [[0.0_f32; 2]; PUMP_BLOCK_FRAMES];
     let mut test_buf = [[0.0_f32; 2]; PUMP_BLOCK_FRAMES];
     let mut raw_bytes: Vec<u8> = Vec::with_capacity(48000);
@@ -1983,20 +2047,23 @@ fn run_capture_pump(inner: Arc<EngineInner>, device_id: String) {
                     break;
                 }
                 if cal_active {
-                    let s0 = inner.cal.s0.load(Ordering::Relaxed);
-                    let s1 = inner.cal.s1.load(Ordering::Relaxed);
+                    let slots = [
+                        inner.cal.s0.load(Ordering::Relaxed),
+                        inner.cal.s1.load(Ordering::Relaxed),
+                        inner.cal.s2.load(Ordering::Relaxed),
+                        inner.cal.s3.load(Ordering::Relaxed),
+                    ];
                     let c_len = cal_chirp.len() as u64;
                     let mut ring = inner.ring.lock();
                     let w0 = ring.write_idx;
                     for (i, out) in test_buf.iter_mut().enumerate() {
                         let idx = w0 + i as u64;
-                        let s = if idx >= s0 && idx < s0 + c_len {
-                            cal_chirp[(idx - s0) as usize]
-                        } else if idx >= s1 && idx < s1 + c_len {
-                            cal_chirp[(idx - s1) as usize]
-                        } else {
-                            0.0
-                        };
+                        let s = slots
+                            .into_iter()
+                            .find_map(|st| {
+                                (idx >= st && idx < st + c_len).then(|| cal_chirp[(idx - st) as usize])
+                            })
+                            .unwrap_or(0.0);
                         *out = [s, s];
                     }
                     ring.write(&test_buf);
@@ -2057,7 +2124,7 @@ fn run_capture_pump(inner: Arc<EngineInner>, device_id: String) {
                         break;
                     }
                     if let Some(ref ev) = h_event {
-                        if let Err(e) = ev.wait_for_event(15) {
+                        if let Err(e) = ev.wait_for_event(10) {
                             let msg = format!("{e}");
                             if !msg.contains("timed out") && !msg.contains("Timeout") {
                                 inner.telemetry.write().input_status =
@@ -2066,7 +2133,7 @@ fn run_capture_pump(inner: Arc<EngineInner>, device_id: String) {
                             }
                         }
                     } else {
-                        thread::sleep(Duration::from_millis(10));
+                        thread::sleep(Duration::from_millis(8));
                     }
 
                     let mut got_frames = false;
@@ -2120,11 +2187,20 @@ fn run_capture_pump(inner: Arc<EngineInner>, device_id: String) {
                         }
                     }
 
-                    if !got_frames && last_audio_ts.elapsed() > Duration::from_millis(45) {
+                    if !got_frames && last_audio_ts.elapsed() > Duration::from_millis(15) {
                         let now = Instant::now();
-                        if now.duration_since(silence_pace) >= Duration::from_millis(10) {
+                        if now.duration_since(silence_pace) > Duration::from_millis(50) {
                             silence_pace = now;
+                        }
+                        let mut wrote = 0;
+                        while now.duration_since(silence_pace) >= Duration::from_millis(10)
+                            && wrote < 3
+                        {
+                            silence_pace += Duration::from_millis(10);
                             inner.ring.lock().write(&silence);
+                            wrote += 1;
+                        }
+                        if wrote > 0 {
                             inner.meters.write().in_db = -60.0;
                         }
                     } else if got_frames {
@@ -2147,9 +2223,25 @@ fn run_capture_pump(inner: Arc<EngineInner>, device_id: String) {
     }
 }
 
+fn is_wireless_device_name(name: &str) -> bool {
+    let nl = name.to_lowercase();
+    [
+        "bt", "bluetooth", "stone", "anc", "earbuds", "soundcore", "jbl", "sony", "bose",
+        "marshall", "airpods", "sennheiser", "jabra", "beats",
+    ]
+    .iter()
+    .any(|k| nl.contains(k))
+}
+
 fn open_render_client(dev: &Device) -> Result<(AudioClient, WaveFormat, wasapi::Handle), String> {
     let mut client = dev.get_iaudioclient().map_err(|e| format!("{e}"))?;
     let (def_period, _min_period) = client.get_device_period().unwrap_or((100_000, 100_000));
+    let is_bt = dev
+        .get_friendlyname()
+        .map(|n| is_wireless_device_name(&n))
+        .unwrap_or(false);
+    // Give Bluetooth 45 ms and wired/built-in speakers 25 ms shared engine buffer slack to stop crackles
+    let min_hns = if is_bt { 450_000 } else { 250_000 };
     let desired = WaveFormat::new(32, 32, SampleType::Float, MASTER_RATE as usize, 2, None);
 
     // Prefer EventsShared with autoconvert so hardware (including 44.1kHz Bluetooth) runs smoothly
@@ -2159,7 +2251,7 @@ fn open_render_client(dev: &Device) -> Result<(AudioClient, WaveFormat, wasapi::
             Direction::Render,
             StreamMode::EventsShared {
                 autoconvert: true,
-                buffer_duration_hns: def_period.max(100_000),
+                buffer_duration_hns: def_period.max(min_hns),
             },
             None,
         )
@@ -2169,7 +2261,7 @@ fn open_render_client(dev: &Device) -> Result<(AudioClient, WaveFormat, wasapi::
         return Ok((client, desired, ev));
     }
 
-    // Fallback: device mixformat directly without rate autoconvert
+    // Fallback: device mixformat directly with generous shared buffer slack
     let mut client = dev.get_iaudioclient().map_err(|e| format!("{e}"))?;
     let mix = client.get_mixformat().map_err(|e| format!("{e}"))?;
     let fmt = WaveFormat::new(
@@ -2186,7 +2278,7 @@ fn open_render_client(dev: &Device) -> Result<(AudioClient, WaveFormat, wasapi::
             Direction::Render,
             StreamMode::EventsShared {
                 autoconvert: true,
-                buffer_duration_hns: def_period.max(150_000),
+                buffer_duration_hns: def_period.max(min_hns.max(300_000)),
             },
             None,
         )
@@ -2283,10 +2375,15 @@ fn run_output_loop(inner: Arc<EngineInner>, role: String, initial_id: String) {
                     };
 
                     let params = inner.mixer.read().clone();
-                    let delay_ms = match role.as_str() {
-                        "intex" => params.intex_delay_ms,
-                        "boat" => params.boat_delay_ms,
-                        _ => params.laptop_delay_ms,
+                    let cal_now = inner.cal.active.load(Ordering::Relaxed);
+                    let delay_ms = if cal_now {
+                        0.0
+                    } else {
+                        match role.as_str() {
+                            "intex" => params.intex_delay_ms,
+                            "boat" => params.boat_delay_ms,
+                            _ => params.laptop_delay_ms,
+                        }
                     };
 
                     if block_buf.len() != avail {
@@ -2296,31 +2393,39 @@ fn run_output_loop(inner: Arc<EngineInner>, role: String, initial_id: String) {
                     let w_now = {
                         let ring = inner.ring.lock();
                         let w = ring.write_idx;
+                        let min_valid = w.saturating_sub((RING_FRAMES - 4096) as u64) as f64;
                         let target_lag = (BASE_BUFFER_MS + delay_ms) * MASTER_RATE_F64 / 1000.0;
-                        let desired_pos = (w as f64) - target_lag;
+                        let desired_pos = (w as f64 - target_lag).max(min_valid);
                         let mut diff = desired_pos - read_pos;
 
-                        // Snap cleanly without pitch warble when delay slider moves or stream resumes
+                        // Snap cleanly with micro-fade on delay changes, >140 ms lag shifts, underruns, or ring wrap
+                        let step_est = MASTER_RATE_F64 / (out_rate as f64);
+                        let block_need = (avail as f64) * step_est + 64.0;
+                        let underrun = read_pos + block_need >= w as f64;
+                        let overflow = read_pos < min_valid;
+
                         if (delay_ms - prev_delay_ms).abs() > 0.5
-                            || diff.abs() > MASTER_RATE_F64 * 0.25
+                            || diff.abs() > MASTER_RATE_F64 * 0.14
+                            || underrun
+                            || overflow
                         {
                             prev_delay_ms = delay_ms;
-                            if diff.abs() > 240.0 {
-                                read_pos = desired_pos.max(0.0);
+                            if diff.abs() > 240.0 || underrun || overflow {
+                                read_pos = desired_pos.min(w as f64 - block_need).max(min_valid);
                                 smoothed_diff = 0.0;
                                 fade_in = 0.0;
                                 diff = 0.0;
                             }
                         }
 
-                        // 8 ms jitter deadband + ±1500 ppm max clock drift tracking (zero audible pitch bend)
-                        smoothed_diff = 0.992 * smoothed_diff + 0.008 * diff;
-                        let rate_adj = if smoothed_diff.abs() < 384.0 {
+                        // 6 ms jitter deadband + ±1200 ppm smooth clock drift tracking (zero audible warble/tearing)
+                        smoothed_diff = 0.995 * smoothed_diff + 0.005 * diff;
+                        let rate_adj = if smoothed_diff.abs() < 288.0 {
                             1.0
                         } else {
-                            1.0 + (smoothed_diff / (MASTER_RATE_F64 * 12.0)).clamp(-0.0015, 0.0015)
+                            1.0 + (smoothed_diff / (MASTER_RATE_F64 * 14.0)).clamp(-0.0012, 0.0012)
                         };
-                        let step = (MASTER_RATE_F64 / (out_rate as f64)) * rate_adj;
+                        let step = step_est * rate_adj;
                         let read_start = read_pos;
                         ring.read_interpolated(read_pos, &mut block_buf, step);
                         read_pos += (avail as f64) * step;
@@ -2347,31 +2452,33 @@ fn run_output_loop(inner: Arc<EngineInner>, role: String, initial_id: String) {
                     };
                     let solo_blocked = params.solo.as_deref().is_some_and(|s| s != role);
 
-                    let gr_db = if inner.cal.active.load(Ordering::Relaxed) {
+                    let gr_db = if cal_now {
                         if role == "laptop" {
                             block_buf.fill([0.0, 0.0]);
                         } else {
-                            let s_win_start = if role == "boat" {
-                                inner.cal.s0.load(Ordering::Relaxed)
+                            let wins = if role == "boat" {
+                                [
+                                    (inner.cal.s0.load(Ordering::Relaxed), &inner.cal.bt1_lag),
+                                    (inner.cal.s2.load(Ordering::Relaxed), &inner.cal.bt2_lag),
+                                ]
                             } else {
-                                inner.cal.s1.load(Ordering::Relaxed)
+                                [
+                                    (inner.cal.s1.load(Ordering::Relaxed), &inner.cal.aux1_lag),
+                                    (inner.cal.s3.load(Ordering::Relaxed), &inner.cal.aux2_lag),
+                                ]
                             };
-                            let s_win_end = s_win_start + 4800;
                             let read_end = read_start + (avail as f64) * step;
-                            if read_end <= s_win_start as f64 || read_start >= s_win_end as f64 {
-                                block_buf.fill([0.0, 0.0]);
-                            } else {
+                            let matched = wins.into_iter().find(|(ws, _)| {
+                                read_end > *ws as f64 && read_start < (*ws + 4800) as f64
+                            });
+                            if let Some((s_win_start, slot)) = matched {
+                                let s_win_end = s_win_start + 4800;
                                 if read_start <= s_win_start as f64
                                     && read_end > s_win_start as f64
                                 {
                                     let lag = w_after
                                         .saturating_sub(read_start.max(0.0).round() as u64)
                                         .max(1);
-                                    let slot = if role == "boat" {
-                                        &inner.cal.bt_lag_samples
-                                    } else {
-                                        &inner.cal.aux_lag_samples
-                                    };
                                     let _ = slot.compare_exchange(
                                         0,
                                         lag,
@@ -2388,6 +2495,8 @@ fn run_output_loop(inner: Arc<EngineInner>, role: String, initial_id: String) {
                                         frame[1] = (frame[1] * 0.65).clamp(-0.5, 0.5);
                                     }
                                 }
+                            } else {
+                                block_buf.fill([0.0, 0.0]);
                             }
                         }
                         0.0
@@ -2646,6 +2755,17 @@ mod tests {
         ring.read_interpolated((RING_FRAMES - 10) as f64, &mut out, 1.0);
         assert!((out[0][0] - 0.5).abs() < 1e-6);
         assert!((out[24][1] + 0.5).abs() < 1e-6);
+
+        // Resampled 44.1 kHz ratio (1.088435) uses Catmull-Rom cleanly without NaNs or wrap artifacts
+        let mut cubic_out = [[0.0_f32; 2]; 12];
+        ring.read_interpolated((RING_FRAMES - 8) as f64, &mut cubic_out, 48_000.0 / 44_100.0);
+        assert!(cubic_out.iter().all(|f| f[0].is_finite() && (f[0] - 0.5).abs() < 0.05));
+
+        // Stale read position older than ring history must output silence rather than overwritten audio
+        ring.write_idx = (RING_FRAMES as u64) * 3;
+        let mut stale_out = [[0.9_f32; 2]; 8];
+        ring.read_interpolated(100.0, &mut stale_out, 1.0);
+        assert!(stale_out.iter().all(|f| f[0] == 0.0 && f[1] == 0.0));
     }
 
     #[test]
@@ -2818,8 +2938,32 @@ mod tests {
         assert_eq!(factory.mixer.master_vol, 25.0);
         assert_eq!(factory.mixer.intex_delay_ms, 224.0);
         assert_eq!(factory.mixer.position_preset, "desk_triangle");
+        assert_eq!(factory.mixer.calibrated_delay_ms, None);
 
         let _ = fs::remove_file(&cfg);
         let _ = fs::remove_file(AudioRouterEngine::backup_path(&cfg));
+    }
+
+    #[test]
+    fn preset_switch_preserves_calibrated_delay() {
+        let mut m = MixerState::default();
+        m.intex_delay_ms = 236.0;
+        m.laptop_delay_ms = 236.0;
+        m.calibrated_delay_ms = Some(236.0);
+
+        for id in [
+            "wide_room",
+            "cinema_center",
+            "night_safe",
+            "asym_desk",
+            "pure_mirror",
+            "desk_triangle",
+        ] {
+            let p = preset_patch(id).unwrap();
+            m.apply_patch(&p);
+            assert_eq!(m.intex_delay_ms, 236.0, "preset {id} overwrote intex_delay");
+            assert_eq!(m.laptop_delay_ms, 236.0, "preset {id} overwrote laptop_delay");
+            assert_eq!(m.calibrated_delay_ms, Some(236.0));
+        }
     }
 }

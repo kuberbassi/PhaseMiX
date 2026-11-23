@@ -102,6 +102,7 @@ const INITIAL_MIXER: MixerState = {
   laptop_invert: false,
   solo: null,
   test_mode: "off",
+  calibrated_delay_ms: null,
 };
 
 function presetIcon(id: string) {
@@ -542,7 +543,7 @@ export function App() {
     if (calibrating) return;
     setCalibrating(true);
     setCalError(false);
-    setCalStatus("Playing BT + AUX chirps... keep room quiet for 2.5 s");
+    setCalStatus("Playing 2 BT + AUX chirp pairs... keep room quiet (~3 s)");
     try {
       const res = await mixerApi.calibrateSyncDelay();
       applyFullPayload(res.status, true);

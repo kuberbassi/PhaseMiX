@@ -177,20 +177,23 @@ export const SystemProtectionDrawer = memo(function SystemProtectionDrawer({
               }`}
             >
               <Microphone size={14} weight={calibrating ? "fill" : "regular"} />
-              {calibrating ? "Listening via Mic (2.5 s)..." : "Auto-Align Delay via Mic"}
+              {calibrating ? "Measuring BT vs AUX (3 s)..." : "Auto-Align Delay via Mic"}
             </button>
           </WarmTooltip>
 
-          {calStatus && (
+          {(calStatus || mixer.calibrated_delay_ms != null) && (
             <div
               className={`truncate rounded-md px-2 py-1 text-[11px] font-medium ${
-                calError
+                calStatus && calError
                   ? "bg-rose-500/10 text-rose-300"
                   : "bg-emerald-500/10 text-emerald-300"
               }`}
-              title={calStatus}
+              title={
+                calStatus ??
+                `Retained mic calibration: ${mixer.calibrated_delay_ms} ms (kept across presets)`
+              }
             >
-              {calStatus}
+              {calStatus ?? `Saved mic calibration: ${mixer.calibrated_delay_ms} ms`}
             </div>
           )}
 

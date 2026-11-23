@@ -647,78 +647,87 @@ impl TestSignalGenerator {
     }
 }
 
-/// Generate a 40 ms Hann-windowed log chirp (650 Hz -> 3.2 kHz) at 48 kHz for room timing calibration.
-pub fn generate_cal_chirp(fs: f64) -> Vec<f32> {
-    let n = (fs * 0.040).round() as usize;
+/// Generate 44 ms Hann-windowed log chirp quadrature pair (cos/sin, 600 Hz -> 3.4 kHz) at 48 kHz.
+pub fn generate_cal_chirp_pair(fs: f64) -> (Vec<f32>, Vec<f32>) {
+    let n = (fs * 0.044).round() as usize;
     let dur = n as f64 / fs;
-    let f0 = 650.0_f64;
-    let f1 = 3200.0_f64;
+    let f0 = 600.0_f64;
+    let f1 = 3400.0_f64;
     let k = (f1 / f0).ln() / dur;
-    let mut out = Vec::with_capacity(n);
+    let mut cos_out = Vec::with_capacity(n);
+    let mut sin_out = Vec::with_capacity(n);
     for i in 0..n {
         let t = i as f64 / fs;
         let phase = 2.0 * PI * f0 * ((k * t).exp() - 1.0) / k;
         let win = 0.5 * (1.0 - (2.0 * PI * (i as f64) / (n.saturating_sub(1).max(1) as f64)).cos());
-        out.push((0.55 * win * phase.sin()) as f32);
+        let (s, c) = phase.sin_cos();
+        cos_out.push((0.55 * win * c) as f32);
+        sin_out.push((0.55 * win * s) as f32);
     }
-    out
+    (cos_out, sin_out)
 }
 
-/// Find direct-path arrival index (in samples) and SNR confidence for `template` inside `haystack[start..end]`.
+/// Find direct-path arrival index (in samples) and SNR using analytic quadrature envelope `sqrt(I^2 + Q^2)`.
 pub fn find_chirp_arrival(
     haystack: &[f32],
-    template: &[f32],
+    cos_tpl: &[f32],
+    sin_tpl: &[f32],
     start: usize,
     end: usize,
 ) -> Option<(f64, f64)> {
-    if haystack.len() < template.len() || end <= start + template.len() {
+    let t_len = cos_tpl.len().min(sin_tpl.len());
+    if t_len == 0 || haystack.len() < t_len || end <= start + t_len {
         return None;
     }
-    let hi = end.min(haystack.len()).saturating_sub(template.len());
+    let hi = end.min(haystack.len()).saturating_sub(t_len);
     if start >= hi {
         return None;
     }
 
-    let mut corr_vals: Vec<f64> = Vec::with_capacity(hi - start + 1);
+    let mut env_vals: Vec<f64> = Vec::with_capacity(hi - start + 1);
     let mut best_pos = start;
-    let mut best_corr = 0.0_f64;
+    let mut best_env = 0.0_f64;
 
     for pos in start..=hi {
-        let mut dot = 0.0_f64;
-        for (a, b) in haystack[pos..pos + template.len()].iter().zip(template.iter()) {
-            dot += (*a as f64) * (*b as f64);
+        let seg = &haystack[pos..pos + t_len];
+        let mut dot_i = 0.0_f64;
+        let mut dot_q = 0.0_f64;
+        for j in 0..t_len {
+            let x = seg[j] as f64;
+            dot_i += x * (cos_tpl[j] as f64);
+            dot_q += x * (sin_tpl[j] as f64);
         }
-        let mag = dot.abs();
-        corr_vals.push(mag);
-        if mag > best_corr {
-            best_corr = mag;
+        let env = (dot_i * dot_i + dot_q * dot_q).sqrt();
+        env_vals.push(env);
+        if env > best_env {
+            best_env = env;
             best_pos = pos;
         }
     }
 
-    if best_corr <= 1e-4 {
+    if best_env <= 1e-4 {
         return None;
     }
 
-    // Compute median baseline correlation for SNR confidence
-    let mut sorted = corr_vals.clone();
+    let mut sorted = env_vals.clone();
     sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     let median = sorted[sorted.len() / 2].max(1e-6);
-    let snr = best_corr / median;
-    let confidence = ((snr - 2.0) / 14.0).clamp(0.0, 1.0);
+    let snr = best_env / median;
+    if snr < 3.5 {
+        return None;
+    }
 
-    // Direct-path scan back up to 12 ms (576 samples) so early wall bounce doesn't mask direct speaker arrival
+    // Check up to 6 ms (288 samples) earlier only for a true strong direct-path crest (>= 82% of main peak)
     let rel_peak = best_pos - start;
-    let scan_back = rel_peak.saturating_sub(576);
-    let thresh = best_corr * 0.65;
+    let scan_back = rel_peak.saturating_sub(288);
+    let thresh = best_env * 0.82;
     let mut direct_rel = rel_peak;
     for idx in scan_back..=rel_peak {
-        if corr_vals[idx] >= thresh {
-            // Walk locally forward to the crest of the direct-path correlation lobe
-            let lobe_end = (idx + 24).min(rel_peak);
+        if env_vals[idx] >= thresh {
+            let lobe_end = (idx + 32).min(rel_peak);
             let mut local_best = idx;
             for j in idx..=lobe_end {
-                if corr_vals[j] > corr_vals[local_best] {
+                if env_vals[j] > env_vals[local_best] {
                     local_best = j;
                 }
             }
@@ -727,7 +736,7 @@ pub fn find_chirp_arrival(
         }
     }
 
-    Some(((start + direct_rel) as f64, confidence))
+    Some(((start + direct_rel) as f64, snr))
 }
 
 #[cfg(test)]
@@ -814,31 +823,31 @@ mod tests {
 
     #[test]
     fn chirp_matched_filter_recovers_delay_with_noise_and_echo() {
-        let chirp = generate_cal_chirp(48_000.0);
+        let (chirp_cos, chirp_sin) = generate_cal_chirp_pair(48_000.0);
         let mut room = vec![0.0_f32; 48_000 * 2 + 24_000];
-        // Synthetic low noise floor
         let mut seed: u32 = 0x1234_5678;
         for s in &mut room {
             seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
             let white = ((seed >> 16) as f32 / 32768.0) - 1.0;
             *s = white * 0.015;
         }
-        // Chirp 1 (BT delayed 224 ms) at 14_400 + 10_752 (= 25_152), plus 8 ms weaker echo
+        // Burst 1: BT delayed 224 ms + early bounce
         let bt_start = 14_400 + (224 * 48);
-        for (i, v) in chirp.iter().enumerate() {
+        for (i, v) in chirp_cos.iter().enumerate() {
             room[bt_start + i] += *v * 0.7;
             room[bt_start + 384 + i] += *v * 0.25;
         }
-        // Chirp 2 (AUX at 1000 ms later + 0 ms extra delay) at 62_400
+        // Burst 2: AUX at +1000 ms
         let aux_start = 14_400 + 48_000;
-        for (i, v) in chirp.iter().enumerate() {
+        for (i, v) in chirp_cos.iter().enumerate() {
             room[aux_start + i] += *v * 0.85;
         }
 
-        let (p1, c1) = find_chirp_arrival(&room, &chirp, 12_000, 56_000).unwrap();
-        let (p2, c2) = find_chirp_arrival(&room, &chirp, 58_000, room.len()).unwrap();
+        let (p1, snr1) = find_chirp_arrival(&room, &chirp_cos, &chirp_sin, 12_000, 56_000).unwrap();
+        let (p2, snr2) =
+            find_chirp_arrival(&room, &chirp_cos, &chirp_sin, 58_000, room.len()).unwrap();
         let measured_ms = (p1 - (p2 - 48_000.0)) / 48.0;
-        assert!((measured_ms - 224.0).abs() <= 1.0, "got {measured_ms}");
-        assert!(c1 > 0.5 && c2 > 0.5);
+        assert!((measured_ms - 224.0).abs() <= 0.5, "got {measured_ms}");
+        assert!(snr1 > 8.0 && snr2 > 8.0);
     }
 }
