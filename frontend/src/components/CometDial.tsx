@@ -393,7 +393,7 @@ const CometDial: React.FC<CometDialProps> = ({
           '--cd-accent': accent,
           '--cd-ink': ink,
           '--cd-size': `${size}px`,
-          '--cd-figure': `${Math.round(size * 0.16)}px`
+          '--cd-figure': `${Math.round(size * 0.19)}px`
         } as CSSProperties
       }
     >
@@ -436,9 +436,9 @@ const CometDial: React.FC<CometDialProps> = ({
         <circle ref={headRef} className="[fill:var(--cd-accent)]" r={thickness * 1.8} />
       </svg>
       <div className="pointer-events-none absolute inset-0 grid place-items-center" aria-hidden="true">
-        <span className="inline-flex items-baseline gap-[0.06em] leading-none font-medium tracking-[-0.04em] tabular-nums [font-size:var(--cd-figure)]">
+        <span className="inline-flex items-baseline gap-[0.1em] leading-none font-medium tracking-[-0.04em] tabular-nums [font-size:var(--cd-figure)]">
           <span ref={figure} className="comet-dial__figure" />
-          {unit ? <span className="text-[0.5em] opacity-50">{unit}</span> : null}
+          {unit ? <span className="text-[0.58em] opacity-65">{unit}</span> : null}
         </span>
       </div>
     </div>

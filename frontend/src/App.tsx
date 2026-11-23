@@ -1341,7 +1341,7 @@ export function App() {
                         >
                           <SpeakerStage3D
                             mixer={mixer}
-                            targetFps={perfMode === "eco" ? 15 : perfMode === "studio" ? 60 : 30}
+                            targetFps={perfMode === "eco" ? 24 : 60}
                             paused={!stageOpen || compactMode}
                             onSoloRole={handle3dSolo}
                           />

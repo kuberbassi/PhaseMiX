@@ -11,7 +11,7 @@ export interface TelemetrySnapshot {
 
 const initialSnapshot: TelemetrySnapshot = {
   running: false,
-  meters: { in_db: -60, intex_db: -60, boat_db: -60, laptop_db: -60 },
+  meters: { in_db: -92, intex_db: -92, boat_db: -92, laptop_db: -92 },
   telemetry: {
     sample_rate: 48000,
     input_status: "Stopped",

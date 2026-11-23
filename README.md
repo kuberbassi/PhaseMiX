@@ -61,10 +61,10 @@ flowchart LR
 
 | Layer | Architecture | Details |
 | :--- | :--- | :--- |
-| **Desktop Shell & IPC** | Rust + Tauri v2 | Zero-HTTP IPC commands, `33 ms` live meter push, system tray, single-instance lock |
-| **Audio Routing** | Native WASAPI (`wasapi` + `windows` crates) | Zero-alloc `SharedRing`, `8 ms` jitter deadband, `±1500 ppm` drift sync, BT auto-reconnect |
-| **DSP Pipeline** | Pure Rust (`src-tauri/src/dsp.rs`) | Direct Form II transposed biquads, M/S width, C¹ soft-knee `PeakGuard` |
-| **Frontend & 3D** | React 19 · TypeScript · Tailwind v4 · Three.js | Phosphor Icons, WebGL Aurora, 3D stage orbit view |
+| **Desktop Shell & IPC** | Rust + Tauri v2 | Zero-HTTP IPC commands, `16 ms` (`60 Hz`) live meter push, system tray, single-instance lock |
+| **Audio Routing** | Native WASAPI (`wasapi` + `windows` crates) | Lockless `SharedRing`, `1.5 ms` phase lock, `±400 ppm` drift sync, BT auto-reconnect |
+| **DSP Pipeline** | Pure Rust (`src-tauri/src/dsp.rs`) | Direct Form II transposed biquads, Windows perceptual curve, hold-release `PeakGuard` |
+| **Frontend & 3D** | React 19 · TypeScript · Tailwind v4 · Three.js | Phosphor Icons, WebGL Aurora, 60 FPS 3D stage orbit view |
 
 ---
 

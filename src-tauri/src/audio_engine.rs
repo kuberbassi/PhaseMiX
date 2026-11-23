@@ -24,8 +24,8 @@ use windows::Win32::System::Threading::{
 };
 
 use crate::dsp::{
-    block_db, find_chirp_arrival, generate_cal_chirp_pair, AuxChannelProcessor, AuxMode,
-    AuxParams, PrimaryParams, PrimaryProcessor, TestMode, TestSignalGenerator,
+    find_chirp_arrival, generate_cal_chirp_pair, meter_db, AuxChannelProcessor, AuxMode, AuxParams,
+    PrimaryParams, PrimaryProcessor, TestMode, TestSignalGenerator,
 };
 
 pub const MASTER_RATE: u32 = 48_000;
@@ -667,10 +667,10 @@ pub struct Meters {
 impl Default for Meters {
     fn default() -> Self {
         Self {
-            in_db: -60.0,
-            intex_db: -60.0,
-            boat_db: -60.0,
-            laptop_db: -60.0,
+            in_db: -92.0,
+            intex_db: -92.0,
+            boat_db: -92.0,
+            laptop_db: -92.0,
         }
     }
 }
@@ -2354,14 +2354,14 @@ fn run_capture_pump(inner: Arc<EngineInner>, device_id: String) {
                     }
                     ring.write(&test_buf);
                     drop(ring);
-                    set_in_meter(block_db(&test_buf));
+                    set_in_meter(meter_db(&test_buf));
                 } else if m == TestMode::Off {
                     inner.ring.lock().write(&silence);
-                    set_in_meter(-60.0);
+                    set_in_meter(-92.0);
                 } else {
                     sig_gen.generate(m, &mut test_buf);
                     inner.ring.lock().write(&test_buf);
-                    set_in_meter(block_db(&test_buf));
+                    set_in_meter(meter_db(&test_buf));
                 }
                 next_tick += dt;
                 let now = Instant::now();
@@ -2459,7 +2459,7 @@ fn run_capture_pump(inner: Arc<EngineInner>, device_id: String) {
                                         }
                                     }
                                     inner.ring.lock().write(&out_48k);
-                                    set_in_meter(-60.0);
+                                    set_in_meter(-92.0);
                                 } else {
                                     let bytes_read = (read_n as usize) * frame_bytes;
                                     decode_bytes_to_stereo_48k(
@@ -2477,7 +2477,7 @@ fn run_capture_pump(inner: Arc<EngineInner>, device_id: String) {
                                         }
                                         last_cap_frame = *out_48k.last().unwrap_or(&[0.0, 0.0]);
                                         inner.ring.lock().write(&out_48k);
-                                        set_in_meter(block_db(&out_48k));
+                                        set_in_meter(meter_db(&out_48k));
                                     }
                                 }
                             }
@@ -2503,7 +2503,7 @@ fn run_capture_pump(inner: Arc<EngineInner>, device_id: String) {
                                 last_cap_frame = [0.0, 0.0];
                             }
                             inner.ring.lock().write(&tail);
-                            set_in_meter(-60.0);
+                            set_in_meter(-92.0);
                         } else {
                             if now.duration_since(silence_pace) > Duration::from_millis(120) {
                                 silence_pace = now - Duration::from_millis(40);
@@ -2517,7 +2517,7 @@ fn run_capture_pump(inner: Arc<EngineInner>, device_id: String) {
                                 wrote += 1;
                             }
                             if wrote > 0 {
-                                set_in_meter(-60.0);
+                                set_in_meter(-92.0);
                             }
                         }
                     } else if got_frames {
@@ -2534,7 +2534,7 @@ fn run_capture_pump(inner: Arc<EngineInner>, device_id: String) {
                         break;
                     }
                     inner.ring.lock().write(&silence);
-                    set_in_meter(-60.0);
+                    set_in_meter(-92.0);
                     thread::sleep(Duration::from_millis(10));
                 }
             }
@@ -2548,7 +2548,7 @@ fn run_capture_pump(inner: Arc<EngineInner>, device_id: String) {
                         break;
                     }
                     inner.ring.lock().write(&silence);
-                    set_in_meter(-60.0);
+                    set_in_meter(-92.0);
                     thread::sleep(Duration::from_millis(10));
                 }
             }
@@ -2938,7 +2938,7 @@ fn run_output_loop(inner: Arc<EngineInner>, role: String, initial_id: String) {
                         break;
                     }
 
-                    let db = block_db(&block_buf);
+                    let db = meter_db(&block_buf);
                     set_output_meter(&inner, &role, db);
                     let actual_ms = ((w_after as f64 - read_pos) * 1000.0 / MASTER_RATE_F64
                         - BASE_BUFFER_MS)
@@ -2965,7 +2965,7 @@ fn run_output_loop(inner: Arc<EngineInner>, role: String, initial_id: String) {
                         format!("Reconnecting ({e})")
                     },
                 );
-                set_output_meter(&inner, &role, -60.0);
+                set_output_meter(&inner, &role, -92.0);
                 // Interruptible sleep before retrying device ID / re-resolving Bluetooth name
                 let sleep_ticks = if waiting_offline { 15 } else { 8 };
                 for _ in 0..sleep_ticks {

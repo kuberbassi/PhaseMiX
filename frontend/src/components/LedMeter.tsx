@@ -2,15 +2,20 @@ import { useEffect, useRef, useState } from "react";
 
 interface LedMeterProps {
   db: number;
+  level?: number;
   muted?: boolean;
   segments?: number;
 }
 
-export function LedMeter({ db, muted = false, segments = 10 }: LedMeterProps) {
-  // Perceptual curve across -54 dBFS..0 dBFS with crisp peak-hold tick
-  const rawNorm = muted || db <= -58 ? 0 : Math.max(0, Math.min(1, (db + 54) / 52));
-  const norm = Math.pow(rawNorm, 0.85);
-  const litCount = Math.round(norm * segments);
+export function LedMeter({ db, level, muted = false, segments = 10 }: LedMeterProps) {
+  const norm = muted
+    ? 0
+    : typeof level === "number"
+      ? Math.max(0, Math.min(1, level))
+      : db <= -89
+        ? 0
+        : Math.pow(Math.max(0, Math.min(1, (db + 54) / 48)), 0.56);
+  const litCount = norm > 0.01 ? Math.max(1, Math.round(norm * segments)) : 0;
 
   const [peakIdx, setPeakIdx] = useState(-1);
   const peakHoldUntilRef = useRef(0);
@@ -28,12 +33,12 @@ export function LedMeter({ db, muted = false, segments = 10 }: LedMeterProps) {
     }
     if (cur >= peakRef.current) {
       peakRef.current = cur;
-      peakHoldUntilRef.current = now + 520;
+      peakHoldUntilRef.current = now + 420;
       setPeakIdx(cur);
     } else if (now > peakHoldUntilRef.current && peakRef.current > cur) {
       const next = peakRef.current - 1;
       peakRef.current = next;
-      peakHoldUntilRef.current = now + 70;
+      peakHoldUntilRef.current = now + 50;
       setPeakIdx(next);
     }
   }, [litCount, muted]);
@@ -41,7 +46,7 @@ export function LedMeter({ db, muted = false, segments = 10 }: LedMeterProps) {
   return (
     <div
       className="flex flex-col-reverse gap-[1.5px]"
-      title={db <= -59 ? "-∞ dB" : `${db.toFixed(1)} dB`}
+      title={db <= -89 ? "-∞ dB" : `${db.toFixed(1)} dB`}
     >
       {Array.from({ length: segments }, (_, i) => {
         const active = i < litCount;

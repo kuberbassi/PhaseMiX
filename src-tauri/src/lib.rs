@@ -825,7 +825,7 @@ pub fn run() {
                     }
                 })?;
 
-            // Push live 30 Hz meter snapshots over WebView2 IPC + tray sync + hot-plug device watcher
+            // Push live 60 Hz meter snapshots over WebView2 IPC + tray sync + hot-plug device watcher
             let emit_handle = app.handle().clone();
             let emit_eng = state.engine.clone();
             let emit_stop = state.emitter_stop.clone();
@@ -869,7 +869,7 @@ pub fn run() {
                             let _ = emit_handle.emit("phasemix:meters", snap);
                             sent_stopped = !is_running;
                         }
-                        thread::sleep(Duration::from_millis(if is_running { 33 } else { 200 }));
+                        thread::sleep(Duration::from_millis(if is_running { 16 } else { 200 }));
                     }
                 })?;
 

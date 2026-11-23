@@ -2,6 +2,7 @@ import { memo } from "react";
 import { ShieldCheck, ShieldWarning, SpeakerHigh, SpeakerSlash } from "@phosphor-icons/react";
 import { LedMeter } from "@/components/LedMeter";
 import Orb from "@/components/Orb";
+import { dbToVisualNorm } from "@/lib/audioVisuals";
 import { useTelemetrySlice } from "@/lib/telemetryStore";
 import type { Role } from "@/types/mixer";
 
@@ -17,7 +18,12 @@ export const LiveLedMeter = memo(function LiveLedMeter({
       ? Math.max(s.meters.intex_db, s.meters.boat_db, s.meters.laptop_db)
       : s.meters[`${channel}_db`]
   );
-  return <LedMeter db={db} muted={muted} segments={10} />;
+  const masterVol = useTelemetrySlice((s) => s.master_vol);
+  const masterMuted = useTelemetrySlice((s) => s.master_mute);
+  const isOut = channel !== "in";
+  const effectiveMuted = muted || (isOut && masterMuted);
+  const level = dbToVisualNorm(db, masterVol, isOut, effectiveMuted);
+  return <LedMeter db={db} level={level} muted={effectiveMuted} segments={10} />;
 });
 
 export const LiveActualMs = memo(function LiveActualMs({ role }: { role: Role }) {
@@ -51,13 +57,12 @@ export const LiveOrbBadge = memo(function LiveOrbBadge({
   muted?: boolean;
   onToggleMute?: () => void;
 }) {
-  // Quantize energy to 16 discrete steps so silence or tiny ripples never wake Orb WebGL uniforms unnecessarily
+  // Quantize energy to 20 discrete steps using perceptual volume curve so Orb dances smoothly at any volume
   const quantizedEnergy = useTelemetrySlice((s) => {
-    if (muted) return 0;
+    if (muted || s.master_mute) return 0;
     const db = Math.max(s.meters.intex_db, s.meters.boat_db, s.meters.laptop_db);
-    if (db <= -55) return 0;
-    const norm = Math.max(0, Math.min(1, (db + 55) / 48));
-    return Math.round(norm * 16) / 16;
+    const norm = dbToVisualNorm(db, s.master_vol, true, false);
+    return Math.round(norm * 20) / 20;
   });
 
   if (!gpuEnabled || muted) {

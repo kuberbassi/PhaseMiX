@@ -669,10 +669,10 @@ impl AuxChannelProcessor {
     }
 }
 
-/// Instantaneous transient-weighted RMS+Peak meter in dBFS floored at -60 dB.
-pub fn block_db(block: &[[f32; 2]]) -> f64 {
+/// Instantaneous transient-weighted RMS+Peak meter in dBFS with configurable floor.
+pub fn meter_db_floored(block: &[[f32; 2]], floor_db: f64) -> f64 {
     if block.is_empty() {
-        return -60.0;
+        return floor_db;
     }
     let mut sum_sq = 0.0_f64;
     let mut peak = 0.0_f64;
@@ -683,12 +683,23 @@ pub fn block_db(block: &[[f32; 2]]) -> f64 {
         peak = peak.max(a0.abs()).max(a1.abs());
     }
     let rms = (sum_sq / ((block.len() * 2) as f64)).sqrt();
-    let level = 0.65 * rms + 0.35 * peak;
-    if level <= 1e-4 {
-        -60.0
+    let level = 0.45 * rms + 0.55 * peak;
+    let min_lin = 10.0_f64.powf(floor_db / 20.0);
+    if level <= min_lin {
+        floor_db
     } else {
-        (20.0 * level.log10()).clamp(-60.0, 0.0)
+        (20.0 * level.log10()).clamp(floor_db, 0.0)
     }
+}
+
+/// Instantaneous transient-weighted RMS+Peak meter in dBFS floored at -60 dB.
+pub fn block_db(block: &[[f32; 2]]) -> f64 {
+    meter_db_floored(block, -60.0)
+}
+
+/// Extended-range audio meter down to -92 dBFS for quiet perceptual listening levels.
+pub fn meter_db(block: &[[f32; 2]]) -> f64 {
+    meter_db_floored(block, -92.0)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -939,6 +950,10 @@ mod tests {
         }
         assert!(block_db(&imp) > -22.0);
         assert_eq!(block_db(&[[0.0, 0.0]; 128]), -60.0);
+        assert_eq!(meter_db(&[[0.0, 0.0]; 128]), -92.0);
+        let quiet = [[0.0004_f32, -0.0004_f32]; 256];
+        let qdb = meter_db(&quiet);
+        assert!(qdb > -72.0 && qdb < -62.0, "expected -68 dB quiet meter, got {qdb}");
     }
 
     #[test]

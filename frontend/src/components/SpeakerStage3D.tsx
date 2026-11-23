@@ -1,5 +1,6 @@
 import { memo, useEffect, useRef, useState } from "react";
 import * as THREE from "three";
+import { dbToVisualNorm } from "@/lib/audioVisuals";
 import { telemetryStore } from "@/lib/telemetryStore";
 import { POSITION_PRESETS, type MixerState, type Role } from "@/types/mixer";
 
@@ -14,11 +15,6 @@ interface HoverHud {
   role: Role;
   title: string;
   detail: string;
-}
-
-function dbToAmp(db: number): number {
-  if (db <= -58) return 0;
-  return Math.max(0, Math.min(1, (db + 55) / 50));
 }
 
 function tagRole(obj: THREE.Object3D, role: Role) {
@@ -81,7 +77,7 @@ function drawLaptopScreen(
 
 export const SpeakerStage3D = memo(function SpeakerStage3D({
   mixer,
-  targetFps = 30,
+  targetFps = 60,
   paused = false,
   onSoloRole,
 }: SpeakerStage3DProps) {
@@ -121,11 +117,11 @@ export const SpeakerStage3D = memo(function SpeakerStage3D({
     const renderer = new THREE.WebGLRenderer({
       antialias: true,
       alpha: false,
-      powerPreference: "low-power",
+      powerPreference: "high-performance",
       stencil: false,
     });
     renderer.setClearColor(0x141519, 1);
-    renderer.setPixelRatio(1);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
     renderer.setSize(container.clientWidth, container.clientHeight);
     renderer.shadowMap.enabled = false;
     container.appendChild(renderer.domElement);
@@ -487,28 +483,51 @@ export const SpeakerStage3D = memo(function SpeakerStage3D({
       raf = requestAnimationFrame(animate);
       if (!visible || document.hidden) return;
 
-      const m = telemetryStore.getSnapshot().meters;
+      const snap = telemetryStore.getSnapshot();
+      const m = snap.meters;
       const mx = mixerRef.current;
+      const mVol = snap.master_vol ?? mx.master_vol;
+      const mMute = snap.master_mute ?? mx.master_mute;
       const solo = mx.solo;
-      const ampIn = dbToAmp(m.in_db);
-      const ampI = mx.master_mute || mx.intex_mute || (solo !== null && solo !== "intex") ? 0 : dbToAmp(m.intex_db);
-      const ampB = mx.master_mute || mx.boat_mute || (solo !== null && solo !== "boat") ? 0 : dbToAmp(m.boat_db);
-      const ampL = mx.master_mute || mx.laptop_mute || (solo !== null && solo !== "laptop") ? 0 : dbToAmp(m.laptop_db);
+      const ampIn = dbToVisualNorm(m.in_db, mVol, false, false);
+      const ampI = dbToVisualNorm(
+        m.intex_db,
+        mVol,
+        true,
+        mMute || mx.intex_mute || (solo !== null && solo !== "intex")
+      );
+      const ampB = dbToVisualNorm(
+        m.boat_db,
+        mVol,
+        true,
+        mMute || mx.boat_mute || (solo !== null && solo !== "boat")
+      );
+      const ampL = dbToVisualNorm(
+        m.laptop_db,
+        mVol,
+        true,
+        mMute || mx.laptop_mute || (solo !== null && solo !== "laptop")
+      );
 
       const preset = POSITION_PRESETS.find((p) => p.id === mx.position_preset) ?? POSITION_PRESETS[0];
       const L = preset.layout;
       const widthScale = 0.72 + ((mx.intex_width - 50) / 100) * 0.56;
       const moving = intexL.group.position.distanceToSquared(tmpVec.set(L.intexL[0] * widthScale, L.intexL[1], L.intexL[2])) > 0.001;
 
-      const activeFps = dragging || moving || Math.abs(dist - targetDist) > 0.02 || ampI + ampB + ampL > 0.02 ? fpsRef.current : 8;
-      const interval = 1000 / Math.max(6, activeFps);
-      if (!dragging && now - lastDraw < interval) return;
+      const audioActive = ampIn > 0.01 || ampI + ampB + ampL > 0.01;
+      const activeFps = dragging || moving || Math.abs(dist - targetDist) > 0.01 || audioActive
+        ? fpsRef.current
+        : Math.min(fpsRef.current, 30);
+      if (activeFps < 55 && !dragging) {
+        const interval = 1000 / Math.max(12, activeFps) - 1.5;
+        if (lastDraw && now - lastDraw < interval) return;
+      }
 
-      const dt = Math.min(0.1, lastDraw ? (now - lastDraw) / 1000 : 0.033);
+      const dt = Math.min(0.1, lastDraw ? (now - lastDraw) / 1000 : 0.0167);
       lastDraw = now;
       elapsed += dt;
 
-      const lerpAlpha = 1 - Math.exp(-dt * 7.0);
+      const lerpAlpha = 1 - Math.exp(-dt * 8.5);
       dist += (targetDist - dist) * lerpAlpha;
 
       const moveObj = (obj: THREE.Object3D, x: number, y: number, z: number, lookAtListener = true) => {
@@ -528,25 +547,25 @@ export const SpeakerStage3D = memo(function SpeakerStage3D({
       const balL = bal > 0 ? 1 - bal * 0.65 : 1;
       const balR = bal < 0 ? 1 + bal * 0.65 : 1;
 
-      const pulseI = Math.sin(elapsed * 26) * 0.03 * ampI;
+      const pulseI = Math.sin(elapsed * 26) * 0.036 * ampI;
       intexL.cone.position.z = 0.23 + pulseI * balL;
       intexR.cone.position.z = 0.23 + pulseI * balR;
-      subL.cone.position.z = 0.35 + pulseI * 1.45 * balL;
-      subR.cone.position.z = 0.35 + pulseI * 1.45 * balR;
+      subL.cone.position.z = 0.35 + pulseI * 1.55 * balL;
+      subR.cone.position.z = 0.35 + pulseI * 1.55 * balR;
 
       const intexHighlight = solo === "intex" || activeHoverRole === "intex";
       const intexTargetCol = solo !== null && solo !== "intex" ? colDim : intexHighlight ? colGreen : colWhite;
       intexL.ringMat.emissive.copy(intexTargetCol);
       intexR.ringMat.emissive.copy(intexTargetCol);
-      intexL.ringMat.emissiveIntensity = (intexHighlight ? 0.35 : 0.15) + ampI * balL * 0.9;
-      intexR.ringMat.emissiveIntensity = (intexHighlight ? 0.35 : 0.15) + ampI * balR * 0.9;
+      intexL.ringMat.emissiveIntensity = (intexHighlight ? 0.35 : 0.15) + ampI * balL * 0.95;
+      intexR.ringMat.emissiveIntensity = (intexHighlight ? 0.35 : 0.15) + ampI * balR * 0.95;
       subL.ringMat.emissive.copy(intexTargetCol);
       subR.ringMat.emissive.copy(intexTargetCol);
-      subL.ringMat.emissiveIntensity = 0.15 + ampI * balL * 1.0;
-      subR.ringMat.emissiveIntensity = 0.15 + ampI * balR * 1.0;
+      subL.ringMat.emissiveIntensity = 0.15 + ampI * balL * 1.05;
+      subR.ringMat.emissiveIntensity = 0.15 + ampI * balR * 1.05;
 
       const boatSign = mx.boat_invert ? -1 : 1;
-      const pulseB = Math.sin(elapsed * 30) * 0.022 * ampB * boatSign;
+      const pulseB = Math.sin(elapsed * 30) * 0.028 * ampB * boatSign;
       boat.capL.position.x = -0.46 - pulseB;
       boat.capR.position.x = 0.46 + pulseB;
       const boatCol = mx.boat_invert
@@ -557,9 +576,9 @@ export const SpeakerStage3D = memo(function SpeakerStage3D({
             ? colGreen
             : colWhite;
       boat.ringMat.emissive.copy(boatCol);
-      boat.ringMat.emissiveIntensity = (solo === "boat" || activeHoverRole === "boat" ? 0.38 : 0.15) + ampB * 0.9;
+      boat.ringMat.emissiveIntensity = (solo === "boat" || activeHoverRole === "boat" ? 0.38 : 0.15) + ampB * 0.95;
       ledGreen.emissive.copy(mx.boat_invert ? colAmber : colGreen);
-      ledGreen.emissiveIntensity = 0.4 + ampB * 1.2;
+      ledGreen.emissiveIntensity = 0.4 + ampB * 1.25;
 
       const laptopCol = mx.laptop_invert
         ? colAmber
@@ -569,12 +588,12 @@ export const SpeakerStage3D = memo(function SpeakerStage3D({
             ? colGreen
             : colWhite;
       laptop.barMat.emissive.copy(laptopCol);
-      laptop.barMat.emissiveIntensity = (solo === "laptop" || activeHoverRole === "laptop" ? 0.38 : 0.15) + ampL * 0.85;
+      laptop.barMat.emissiveIntensity = (solo === "laptop" || activeHoverRole === "laptop" ? 0.38 : 0.15) + ampL * 0.9;
 
       const delayDiff = Math.abs(mx.intex_delay_ms - mx.laptop_delay_ms);
       const syncGood = delayDiff <= 8 && mx.intex_delay_ms > 0;
       listenerMat.color.copy(mx.master_mute ? colDim : syncGood ? colGreen : colAmber);
-      listenerMat.opacity = mx.master_mute ? 0.25 : 0.4 + (ampI + ampB + ampL) * 0.12;
+      listenerMat.opacity = mx.master_mute ? 0.25 : 0.4 + (ampI + ampB + ampL) * 0.14;
 
       const updateWave = (
         w: { mesh: THREE.Mesh; mat: THREE.MeshBasicMaterial },
@@ -587,18 +606,18 @@ export const SpeakerStage3D = memo(function SpeakerStage3D({
         w.mesh.position.x = x;
         w.mesh.position.z = z;
         const phase = (elapsed * speed) % 1;
-        const scale = 0.7 + phase * (1.7 + amp * 1.9);
+        const scale = 0.7 + phase * (1.7 + amp * 2.0);
         w.mesh.scale.set(scale, scale, 1);
         w.mat.color.copy(col);
-        w.mat.opacity = (0.04 + amp * 0.28) * (1 - phase);
+        w.mat.opacity = (0.04 + amp * 0.3) * (1 - phase);
       };
       updateWave(waveIntex, intexL.group.position.x * 0 + bal * 0.45, (L.subL[2] + L.subR[2]) * 0.5, ampI, 0.85, syncGood ? colGreen : colWhite);
       updateWave(waveBoat, L.boat[0], L.boat[2], ampB, 1.1, mx.boat_invert ? colAmber : colWhite);
       updateWave(waveLaptop, L.laptop[0], L.laptop[2], ampL, 1.3, mx.laptop_invert ? colAmber : colWhite);
 
-      if (screenCtx && now - lastScreenDraw >= 85) {
+      if (screenCtx && now - lastScreenDraw >= 28) {
         lastScreenDraw = now;
-        drawLaptopScreen(screenCtx, 256, 128, mx.master_mute, ampIn, ampI, ampB, ampL);
+        drawLaptopScreen(screenCtx, 256, 128, mMute || mx.master_mute, ampIn, ampI, ampB, ampL);
         screenTex.needsUpdate = true;
       }
 
