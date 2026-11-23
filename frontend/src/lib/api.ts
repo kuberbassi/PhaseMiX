@@ -10,6 +10,21 @@ export interface FastMetersResponse {
   master_mute: boolean;
 }
 
+export interface CalibrationResult {
+  ok: boolean;
+  measured_ms: number;
+  confidence: number;
+  message: string;
+  status: StatusPayload;
+}
+
+export interface ProfileIoResult {
+  ok: boolean;
+  cancelled?: boolean;
+  path?: string;
+  status?: StatusPayload;
+}
+
 export const IS_TAURI =
   typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
@@ -56,6 +71,20 @@ export const mixerApi = {
     IS_TAURI ? invoke<boolean>("get_autostart") : Promise.resolve(false),
   setAutostart: (enabled: boolean) =>
     IS_TAURI ? invoke<boolean>("set_autostart", { enabled }) : Promise.resolve(false),
+  calibrateSyncDelay: () =>
+    IS_TAURI
+      ? invoke<CalibrationResult>("calibrate_sync_delay")
+      : req<CalibrationResult>("/api/calibrate_delay", "POST", {}),
+  exportProfile: () =>
+    IS_TAURI
+      ? invoke<ProfileIoResult>("export_profile")
+      : Promise.resolve<ProfileIoResult>({ ok: false, cancelled: true }),
+  importProfile: () =>
+    IS_TAURI
+      ? invoke<ProfileIoResult>("import_profile")
+      : Promise.resolve<ProfileIoResult>({ ok: false, cancelled: true }),
+  resetFactory: () =>
+    IS_TAURI ? invoke<StatusPayload>("reset_factory") : req<StatusPayload>("/api/reset_factory", "POST", {}),
 };
 
 export async function subscribeMetersEvent(

@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
@@ -24,8 +24,8 @@ use windows::Win32::System::Threading::{
 };
 
 use crate::dsp::{
-    block_db, AuxChannelProcessor, AuxMode, AuxParams, PrimaryParams, PrimaryProcessor,
-    TestMode, TestSignalGenerator,
+    block_db, find_chirp_arrival, generate_cal_chirp, AuxChannelProcessor, AuxMode, AuxParams,
+    PrimaryParams, PrimaryProcessor, TestMode, TestSignalGenerator,
 };
 
 pub const MASTER_RATE: u32 = 48_000;
@@ -1021,15 +1021,46 @@ pub fn default_config_path() -> PathBuf {
     PathBuf::from(appdata).join("PhaseMiX").join("config.json")
 }
 
+struct CalibrationSync {
+    active: AtomicBool,
+    s0: AtomicU64,
+    s1: AtomicU64,
+    bt_lag_samples: AtomicU64,
+    aux_lag_samples: AtomicU64,
+}
+
+impl Default for CalibrationSync {
+    fn default() -> Self {
+        Self {
+            active: AtomicBool::new(false),
+            s0: AtomicU64::new(0),
+            s1: AtomicU64::new(0),
+            bt_lag_samples: AtomicU64::new(0),
+            aux_lag_samples: AtomicU64::new(0),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct CalibrationResult {
+    pub ok: bool,
+    pub measured_ms: f64,
+    pub confidence: f64,
+    pub message: String,
+    pub status: StatusPayload,
+}
+
 struct EngineInner {
     config_path: PathBuf,
     mixer: RwLock<MixerState>,
+    prev_day_preset: RwLock<String>,
     selected_ids: RwLock<SelectedIds>,
     selected_names: RwLock<SelectedNames>,
     preferred_names: RwLock<SelectedNames>,
     meters: RwLock<Meters>,
     telemetry: RwLock<Telemetry>,
     ring: Mutex<SharedRing>,
+    cal: CalibrationSync,
     running: AtomicBool,
     stop_flag: Arc<AtomicBool>,
     workers: Mutex<Vec<JoinHandle<()>>>,
@@ -1052,12 +1083,14 @@ impl AudioRouterEngine {
         let inner = Arc::new(EngineInner {
             config_path,
             mixer: RwLock::new(MixerState::default()),
+            prev_day_preset: RwLock::new("desk_triangle".to_string()),
             selected_ids: RwLock::new(SelectedIds::default()),
             selected_names: RwLock::new(SelectedNames::default()),
             preferred_names: RwLock::new(SelectedNames::default()),
             meters: RwLock::new(Meters::default()),
             telemetry: RwLock::new(Telemetry::default()),
             ring: Mutex::new(SharedRing::new()),
+            cal: CalibrationSync::default(),
             running: AtomicBool::new(false),
             stop_flag: Arc::new(AtomicBool::new(false)),
             workers: Mutex::new(Vec::new()),
@@ -1129,6 +1162,9 @@ impl AudioRouterEngine {
         m.laptop_mute = false;
         m.solo = None;
 
+        if m.position_preset != "night_safe" && m.position_preset != "custom" {
+            *inner.prev_day_preset.write() = m.position_preset.clone();
+        }
         *inner.mixer.write() = m;
         *inner.selected_names.write() = parsed.devices.clone();
         *inner.preferred_names.write() = parsed.devices;
@@ -1258,6 +1294,9 @@ impl AudioRouterEngine {
         let updated = {
             let mut m = self.inner.mixer.write();
             m.apply_patch(&patch);
+            if m.position_preset != "night_safe" && m.position_preset != "custom" {
+                *self.inner.prev_day_preset.write() = m.position_preset.clone();
+            }
             m.clone()
         };
         Self::schedule_save(&self.inner);
@@ -1269,10 +1308,277 @@ impl AudioRouterEngine {
         let updated = {
             let mut m = self.inner.mixer.write();
             m.apply_patch(&patch);
+            if id != "night_safe" && id != "custom" {
+                *self.inner.prev_day_preset.write() = id.to_string();
+            }
             m.clone()
         };
         Self::save_config_now(&self.inner);
         Some(updated)
+    }
+
+    /// One-tap Midnight Guard toggle: jumps to Night Ear-Safe (-15 dB), or restores last day preset.
+    pub fn toggle_night_guard(&self) -> MixerState {
+        let is_night = self.inner.mixer.read().position_preset == "night_safe";
+        let target = if is_night {
+            let prev = self.inner.prev_day_preset.read().clone();
+            if prev == "night_safe" || prev.is_empty() {
+                "desk_triangle".to_string()
+            } else {
+                prev
+            }
+        } else {
+            let cur = self.inner.mixer.read().position_preset.clone();
+            if cur != "custom" {
+                *self.inner.prev_day_preset.write() = cur;
+            }
+            "night_safe".to_string()
+        };
+        self.apply_preset(&target).unwrap_or_else(|| self.inner.mixer.read().clone())
+    }
+
+    /// Smart cycle across main listening modes: Desk -> Music -> Cinema -> Night Safe -> Desk.
+    pub fn cycle_smart_preset(&self) -> MixerState {
+        const ORDER: [&str; 4] = ["desk_triangle", "wide_room", "cinema_center", "night_safe"];
+        let cur = self.inner.mixer.read().position_preset.clone();
+        let next = match ORDER.iter().position(|&p| p == cur) {
+            Some(i) => ORDER[(i + 1) % ORDER.len()],
+            None => ORDER[0],
+        };
+        self.apply_preset(next).unwrap_or_else(|| self.inner.mixer.read().clone())
+    }
+
+    pub fn export_profile_json(&self) -> Result<String, String> {
+        let payload = PersistedConfig {
+            mixer: self.inner.mixer.read().clone(),
+            devices: self.inner.preferred_names.read().clone(),
+        };
+        serde_json::to_string_pretty(&payload).map_err(|e| format!("{e}"))
+    }
+
+    pub fn import_profile_json(&self, raw: &str) -> Result<StatusPayload, String> {
+        let parsed = serde_json::from_str::<PersistedConfig>(raw)
+            .map_err(|e| format!("Invalid profile JSON: {e}"))?;
+        let mut m = parsed.mixer;
+        m.enforce_protection_cap();
+        m.test_mode = "off".to_string();
+        m.master_mute = false;
+        m.intex_mute = false;
+        m.boat_mute = false;
+        m.laptop_mute = false;
+        m.solo = None;
+        if m.position_preset != "night_safe" && m.position_preset != "custom" {
+            *self.inner.prev_day_preset.write() = m.position_preset.clone();
+        }
+        *self.inner.mixer.write() = m;
+        if !parsed.devices.input_name.is_empty()
+            || !parsed.devices.intex_name.is_empty()
+            || !parsed.devices.boat_name.is_empty()
+            || !parsed.devices.laptop_name.is_empty()
+        {
+            *self.inner.preferred_names.write() = parsed.devices;
+            Self::refresh_device_selection_inner(&self.inner, true);
+        } else {
+            Self::save_config_now(&self.inner);
+        }
+        Ok(self.status_payload())
+    }
+
+    pub fn reset_factory(&self) -> StatusPayload {
+        *self.inner.prev_day_preset.write() = "desk_triangle".to_string();
+        *self.inner.mixer.write() = MixerState::default();
+        Self::save_config_now(&self.inner);
+        self.status_payload()
+    }
+
+    /// Measure acoustic BT vs Primary AUX lag differential via default laptop mic using FM chirps.
+    pub fn calibrate_sync_delay(&self) -> CalibrationResult {
+        ensure_com();
+        if !self.is_running() {
+            return CalibrationResult {
+                ok: false,
+                measured_ms: 0.0,
+                confidence: 0.0,
+                message: "Start audio routing before running auto-align".to_string(),
+                status: self.status_payload(),
+            };
+        }
+        let ids = self.inner.selected_ids.read().clone();
+        if ids.boat_id.is_empty() || ids.intex_id.is_empty() {
+            return CalibrationResult {
+                ok: false,
+                measured_ms: 0.0,
+                confidence: 0.0,
+                message: "Assign both Primary AUX and Center Wireless Bluetooth first".to_string(),
+                status: self.status_payload(),
+            };
+        }
+
+        struct CalGuard<'a>(&'a CalibrationSync);
+        impl Drop for CalGuard<'_> {
+            fn drop(&mut self) {
+                self.0.active.store(false, Ordering::SeqCst);
+            }
+        }
+
+        let mic_open = DeviceEnumerator::new()
+            .and_then(|e| e.get_default_device(Direction::Capture))
+            .map_err(|e| format!("No active default microphone ({e})"))
+            .and_then(|dev| open_loopback_or_capture(&dev));
+
+        let (client, fmt, h_event) = match mic_open {
+            Ok(v) => v,
+            Err(msg) => {
+                return CalibrationResult {
+                    ok: false,
+                    measured_ms: 0.0,
+                    confidence: 0.0,
+                    message: msg,
+                    status: self.status_payload(),
+                };
+            }
+        };
+        let cap_client = match client.get_audiocaptureclient() {
+            Ok(c) => c,
+            Err(e) => {
+                return CalibrationResult {
+                    ok: false,
+                    measured_ms: 0.0,
+                    confidence: 0.0,
+                    message: format!("Microphone client error: {e}"),
+                    status: self.status_payload(),
+                };
+            }
+        };
+        if let Err(e) = client.start_stream() {
+            return CalibrationResult {
+                ok: false,
+                measured_ms: 0.0,
+                confidence: 0.0,
+                message: format!("Microphone start failed: {e}"),
+                status: self.status_payload(),
+            };
+        }
+
+        let chirp = generate_cal_chirp(MASTER_RATE_F64);
+        let w_base = self.inner.ring.lock().write_idx;
+        let s0 = w_base + (MASTER_RATE as u64 * 35) / 100; // +350 ms
+        let s1 = s0 + MASTER_RATE as u64; // +1000 ms after s0
+        self.inner.cal.s0.store(s0, Ordering::SeqCst);
+        self.inner.cal.s1.store(s1, Ordering::SeqCst);
+        self.inner.cal.bt_lag_samples.store(0, Ordering::SeqCst);
+        self.inner.cal.aux_lag_samples.store(0, Ordering::SeqCst);
+        self.inner.cal.active.store(true, Ordering::SeqCst);
+        let _cal_guard = CalGuard(&self.inner.cal);
+
+        let frame_bytes =
+            (fmt.get_nchannels().max(1) as usize) * ((fmt.get_bitspersample() / 8).max(1) as usize);
+        let mut raw_bytes: Vec<u8> = Vec::with_capacity(48_000);
+        let mut scratch_stereo: Vec<[f32; 2]> = Vec::with_capacity(2048);
+        let mut out_48k: Vec<[f32; 2]> = Vec::with_capacity(2048);
+        let mut mono: Vec<f32> = Vec::with_capacity(MASTER_RATE as usize * 3);
+
+        let target_samples = (MASTER_RATE as usize * 255) / 100; // 2.55 s window
+        let start_t = Instant::now();
+        while mono.len() < target_samples && start_t.elapsed() < Duration::from_millis(2950) {
+            if let Some(ref ev) = h_event {
+                let _ = ev.wait_for_event(20);
+            } else {
+                thread::sleep(Duration::from_millis(10));
+            }
+            loop {
+                let pkt = cap_client.get_next_packet_size().unwrap_or(Some(0)).unwrap_or(0);
+                if pkt == 0 {
+                    break;
+                }
+                let needed = (pkt as usize) * frame_bytes;
+                if raw_bytes.len() < needed {
+                    raw_bytes.resize(needed, 0);
+                }
+                match cap_client.read_from_device(&mut raw_bytes[..needed]) {
+                    Ok((read_n, info)) if read_n > 0 => {
+                        if info.flags.silent {
+                            let add = (read_n as usize).min(4096);
+                            mono.resize(mono.len() + add, 0.0);
+                        } else {
+                            let bytes_read = (read_n as usize) * frame_bytes;
+                            decode_bytes_to_stereo_48k(
+                                &raw_bytes[..bytes_read],
+                                &fmt,
+                                &mut scratch_stereo,
+                                &mut out_48k,
+                            );
+                            for f in &out_48k {
+                                mono.push(0.5 * (f[0] + f[1]));
+                            }
+                        }
+                    }
+                    _ => break,
+                }
+            }
+        }
+        let _ = client.stop_stream();
+        self.inner.cal.active.store(false, Ordering::SeqCst);
+
+        if mono.len() < MASTER_RATE as usize * 2 {
+            return CalibrationResult {
+                ok: false,
+                measured_ms: 0.0,
+                confidence: 0.0,
+                message: "Microphone capture too short — check Windows mic permissions".to_string(),
+                status: self.status_payload(),
+            };
+        }
+
+        let mid_split = (MASTER_RATE as usize * 115) / 100; // 1.15 s splits BT chirp & AUX chirp cleanly
+        let w1 = find_chirp_arrival(&mono, &chirp, 0, mid_split.min(mono.len()));
+        let w2 = find_chirp_arrival(&mono, &chirp, mid_split.min(mono.len()), mono.len());
+
+        let (Some((p1, c1)), Some((p2, c2))) = (w1, w2) else {
+            return CalibrationResult {
+                ok: false,
+                measured_ms: 0.0,
+                confidence: 0.0,
+                message: "Could not hear both speakers — verify BT & AUX are unmuted".to_string(),
+                status: self.status_payload(),
+            };
+        };
+
+        let conf = c1.min(c2);
+        if conf < 0.25 {
+            return CalibrationResult {
+                ok: false,
+                measured_ms: 0.0,
+                confidence: (conf * 100.0).round(),
+                message: "Room too noisy or speakers too quiet — raise level slightly and retry"
+                    .to_string(),
+                status: self.status_payload(),
+            };
+        }
+
+        let delta_ring = (s1 - s0) as f64;
+        let bt_lag = self.inner.cal.bt_lag_samples.load(Ordering::Relaxed) as f64;
+        let aux_lag = self.inner.cal.aux_lag_samples.load(Ordering::Relaxed) as f64;
+        let raw_delay = ((p1 - (p2 - delta_ring)) + (aux_lag - bt_lag)) / (MASTER_RATE_F64 / 1000.0);
+        let measured_ms = raw_delay.round().clamp(0.0, 450.0);
+
+        {
+            let mut m = self.inner.mixer.write();
+            m.intex_delay_ms = measured_ms;
+            m.laptop_delay_ms = measured_ms;
+        }
+        Self::save_config_now(&self.inner);
+
+        CalibrationResult {
+            ok: true,
+            measured_ms,
+            confidence: (conf * 100.0).round(),
+            message: format!(
+                "Aligned AUX & Built-in to {measured_ms:.0} ms ({:.0}% match)",
+                conf * 100.0
+            ),
+            status: self.status_payload(),
+        }
     }
 
     pub fn set_win_vol(&self, role: &str, volume_pct: f64) -> (bool, StatusPayload) {
@@ -1313,6 +1619,17 @@ impl AudioRouterEngine {
             master_vol: m.master_vol,
             master_mute: m.master_mute,
         }
+    }
+
+    pub fn tray_summary(&self) -> (String, f64, bool, f64, bool) {
+        let m = self.inner.mixer.read();
+        (
+            m.position_preset.clone(),
+            m.master_vol,
+            m.master_mute,
+            m.intex_delay_ms,
+            self.inner.running.load(Ordering::SeqCst),
+        )
     }
 
     pub fn status_payload(&self) -> StatusPayload {
@@ -1567,6 +1884,7 @@ fn run_capture_pump(inner: Arc<EngineInner>, device_id: String) {
     ensure_com();
     let _prio_guard = elevate_audio_thread();
     let mut sig_gen = TestSignalGenerator::new(MASTER_RATE_F64);
+    let cal_chirp = generate_cal_chirp(MASTER_RATE_F64);
     let silence = [[0.0_f32; 2]; PUMP_BLOCK_FRAMES];
     let mut test_buf = [[0.0_f32; 2]; PUMP_BLOCK_FRAMES];
     let mut raw_bytes: Vec<u8> = Vec::with_capacity(48000);
@@ -1575,8 +1893,11 @@ fn run_capture_pump(inner: Arc<EngineInner>, device_id: String) {
 
     while !inner.stop_flag.load(Ordering::Relaxed) {
         let mode_now = TestMode::from_str(&inner.mixer.read().test_mode);
-        if device_id.is_empty() || mode_now != TestMode::Off {
-            inner.telemetry.write().input_status = if device_id.is_empty() {
+        let cal_now = inner.cal.active.load(Ordering::Relaxed);
+        if device_id.is_empty() || mode_now != TestMode::Off || cal_now {
+            inner.telemetry.write().input_status = if cal_now {
+                "Auto-Align Calibration".to_string()
+            } else if device_id.is_empty() {
                 "Test Generator Only".to_string()
             } else {
                 "Test Tone Active".to_string()
@@ -1585,10 +1906,31 @@ fn run_capture_pump(inner: Arc<EngineInner>, device_id: String) {
             let dt = Duration::from_micros(10_000);
             while !inner.stop_flag.load(Ordering::Relaxed) {
                 let m = TestMode::from_str(&inner.mixer.read().test_mode);
-                if m == TestMode::Off && !device_id.is_empty() {
+                let cal_active = inner.cal.active.load(Ordering::Relaxed);
+                if !cal_active && m == TestMode::Off && !device_id.is_empty() {
                     break;
                 }
-                if m == TestMode::Off {
+                if cal_active {
+                    let s0 = inner.cal.s0.load(Ordering::Relaxed);
+                    let s1 = inner.cal.s1.load(Ordering::Relaxed);
+                    let c_len = cal_chirp.len() as u64;
+                    let mut ring = inner.ring.lock();
+                    let w0 = ring.write_idx;
+                    for (i, out) in test_buf.iter_mut().enumerate() {
+                        let idx = w0 + i as u64;
+                        let s = if idx >= s0 && idx < s0 + c_len {
+                            cal_chirp[(idx - s0) as usize]
+                        } else if idx >= s1 && idx < s1 + c_len {
+                            cal_chirp[(idx - s1) as usize]
+                        } else {
+                            0.0
+                        };
+                        *out = [s, s];
+                    }
+                    ring.write(&test_buf);
+                    drop(ring);
+                    inner.meters.write().in_db = block_db(&test_buf);
+                } else if m == TestMode::Off {
                     inner.ring.lock().write(&silence);
                     inner.meters.write().in_db = -60.0;
                 } else {
@@ -1637,7 +1979,9 @@ fn run_capture_pump(inner: Arc<EngineInner>, device_id: String) {
                 let mut silence_pace = Instant::now();
 
                 'capture_stream: while !inner.stop_flag.load(Ordering::Relaxed) {
-                    if TestMode::from_str(&inner.mixer.read().test_mode) != TestMode::Off {
+                    if TestMode::from_str(&inner.mixer.read().test_mode) != TestMode::Off
+                        || inner.cal.active.load(Ordering::Relaxed)
+                    {
                         break;
                     }
                     if let Some(ref ev) = h_event {
@@ -1718,6 +2062,7 @@ fn run_capture_pump(inner: Arc<EngineInner>, device_id: String) {
                 let _ = client.stop_stream();
                 if !inner.stop_flag.load(Ordering::Relaxed)
                     && TestMode::from_str(&inner.mixer.read().test_mode) == TestMode::Off
+                    && !inner.cal.active.load(Ordering::Relaxed)
                 {
                     thread::sleep(Duration::from_millis(250));
                 }
@@ -1904,12 +2249,13 @@ fn run_output_loop(inner: Arc<EngineInner>, role: String, initial_id: String) {
                             1.0 + (smoothed_diff / (MASTER_RATE_F64 * 12.0)).clamp(-0.0015, 0.0015)
                         };
                         let step = (MASTER_RATE_F64 / (out_rate as f64)) * rate_adj;
+                        let read_start = read_pos;
                         ring.read_interpolated(read_pos, &mut block_buf, step);
                         read_pos += (avail as f64) * step;
-                        (w, rate_adj)
+                        (w, rate_adj, read_start, step)
                     };
 
-                    let (w_after, rate_adj) = w_now;
+                    let (w_after, rate_adj, read_start, step) = w_now;
 
                     if fade_in < 1.0 {
                         let next_fade = (fade_in + 0.25).min(1.0);
@@ -1929,7 +2275,51 @@ fn run_output_loop(inner: Arc<EngineInner>, role: String, initial_id: String) {
                     };
                     let solo_blocked = params.solo.as_deref().is_some_and(|s| s != role);
 
-                    let gr_db = if role == "intex" {
+                    let gr_db = if inner.cal.active.load(Ordering::Relaxed) {
+                        if role == "laptop" {
+                            block_buf.fill([0.0, 0.0]);
+                        } else {
+                            let s_win_start = if role == "boat" {
+                                inner.cal.s0.load(Ordering::Relaxed)
+                            } else {
+                                inner.cal.s1.load(Ordering::Relaxed)
+                            };
+                            let s_win_end = s_win_start + 4800;
+                            let read_end = read_start + (avail as f64) * step;
+                            if read_end <= s_win_start as f64 || read_start >= s_win_end as f64 {
+                                block_buf.fill([0.0, 0.0]);
+                            } else {
+                                if read_start <= s_win_start as f64
+                                    && read_end > s_win_start as f64
+                                {
+                                    let lag = w_after
+                                        .saturating_sub(read_start.max(0.0).round() as u64)
+                                        .max(1);
+                                    let slot = if role == "boat" {
+                                        &inner.cal.bt_lag_samples
+                                    } else {
+                                        &inner.cal.aux_lag_samples
+                                    };
+                                    let _ = slot.compare_exchange(
+                                        0,
+                                        lag,
+                                        Ordering::SeqCst,
+                                        Ordering::Relaxed,
+                                    );
+                                }
+                                for (idx, frame) in block_buf.iter_mut().enumerate() {
+                                    let pos = read_start + (idx as f64) * step;
+                                    if pos < s_win_start as f64 || pos >= s_win_end as f64 {
+                                        *frame = [0.0, 0.0];
+                                    } else {
+                                        frame[0] = (frame[0] * 0.65).clamp(-0.5, 0.5);
+                                        frame[1] = (frame[1] * 0.65).clamp(-0.5, 0.5);
+                                    }
+                                }
+                            }
+                        }
+                        0.0
+                    } else if role == "intex" {
                         let p = PrimaryParams {
                             master_vol,
                             vol: params.intex_vol,
@@ -2087,7 +2477,7 @@ fn run_win_key_bridge(inner: Arc<EngineInner>, input_id: String) {
     }
 
     while !inner.stop_flag.load(Ordering::Relaxed) {
-        thread::sleep(Duration::from_millis(120));
+        thread::sleep(Duration::from_millis(60));
         if inner.stop_flag.load(Ordering::Relaxed) {
             break;
         }
@@ -2297,5 +2687,67 @@ mod tests {
 
         let _ = fs::remove_file(&cfg);
         let _ = fs::remove_file(&bak);
+    }
+
+    #[test]
+    fn night_guard_toggle_and_smart_cycle_restore_previous_preset() {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let cfg = std::env::temp_dir().join(format!("phasemix_hk_test_{stamp}.json"));
+        let eng = AudioRouterEngine::new(cfg.clone());
+
+        let wide = eng.apply_preset("wide_room").unwrap();
+        assert_eq!(wide.position_preset, "wide_room");
+
+        let night = eng.toggle_night_guard();
+        assert_eq!(night.position_preset, "night_safe");
+        assert_eq!(night.protection_ceiling_db, -15.0);
+
+        let back = eng.toggle_night_guard();
+        assert_eq!(back.position_preset, "wide_room");
+
+        let cycled = eng.cycle_smart_preset();
+        assert_eq!(cycled.position_preset, "cinema_center");
+
+        let _ = fs::remove_file(&cfg);
+        let _ = fs::remove_file(AudioRouterEngine::backup_path(&cfg));
+    }
+
+    #[test]
+    fn export_and_import_profile_roundtrip_enforces_safety_caps() {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let cfg = std::env::temp_dir().join(format!("phasemix_io_test_{stamp}.json"));
+        let eng = AudioRouterEngine::new(cfg.clone());
+
+        eng.update_mixer(MixerPatch {
+            intex_delay_ms: Some(218.0),
+            laptop_delay_ms: Some(218.0),
+            master_vol: Some(36.0),
+            ..Default::default()
+        });
+        let raw = eng.export_profile_json().unwrap();
+        assert!(raw.contains("218"));
+
+        let imported = eng
+            .import_profile_json(
+                r#"{"mixer":{"master_vol":185,"protection_enabled":true,"protection_max_master":55,"master_mute":true,"intex_delay_ms":210,"position_preset":"cinema_center"},"devices":{}}"#,
+            )
+            .unwrap();
+        assert_eq!(imported.mixer.master_vol, 55.0);
+        assert!(!imported.mixer.master_mute);
+        assert_eq!(imported.mixer.intex_delay_ms, 210.0);
+
+        let factory = eng.reset_factory();
+        assert_eq!(factory.mixer.master_vol, 25.0);
+        assert_eq!(factory.mixer.intex_delay_ms, 224.0);
+        assert_eq!(factory.mixer.position_preset, "desk_triangle");
+
+        let _ = fs::remove_file(&cfg);
+        let _ = fs::remove_file(AudioRouterEngine::backup_path(&cfg));
     }
 }

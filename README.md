@@ -36,11 +36,11 @@ flowchart LR
 
 | Feature | What It Does | Specs |
 | :--- | :--- | :--- |
-| **Phase & Delay Sync** | Delays fast wired/internal speakers to match Bluetooth lag | `0 – 450 ms`, `±2 ms` fine step, drift resampling |
+| **Phase & Delay Sync** | Delays wired/internal speakers + mic FM chirp auto-align | `0 – 450 ms`, `±2 ms` step, mic cross-correlation align |
 | **3-Band EQ + Crossover** | Sculpt lows, vocals & highs independently per output | `110 Hz` shelf · `1 kHz` bell · `4.5 kHz` shelf (`±12 dB`), `HPF`/`LPF` |
 | **Ear-Safe Protection** | Prevents sudden system volume blasts or clipping | Master cap (`15–200%`), C¹ limiter (`-6 dB` day / `-15 dB` night), `50%` Win cap |
-| **Position Presets** | Instant stage layouts synced with live 3D room & tray menu | `Desk Triangle`, `Cinema 3.2`, `Wide Room`, `Night Safe`, `Offset`, `Flat` |
-| **Windows Integration** | Keyboard Volume/Mute, Pro Audio MMCSS, ~6 MB tray boot | Win32 `IAudioEndpointVolume`, `Pro Audio` priority, `HKCU\...\Run` (`--tray`) |
+| **Position Presets & Profiles** | Stage layouts synced with 3D room, tray & JSON backup | `Desk Triangle`, `Cinema 3.2`, `Wide Room`, `Night Safe`, Import/Export `.json` |
+| **Windows Integration** | Hotkeys, live tray telemetry, Pro Audio MMCSS, ~6 MB boot | `Ctrl+Alt+M/P/N`, tray checkmarks/tooltip, `IAudioEndpointVolume`, `--tray` |
 
 ---
 

@@ -1,6 +1,6 @@
 [package]
 name = "phasemix"
-version = "3.2.1"
+version = "3.3.0"
 description = "PhaseMiX multi-output Windows WASAPI router & studio console"
 authors = ["kuberbassi"]
 edition = "2024"
@@ -25,6 +25,8 @@ windows = { version = "0.62", features = [
     "Win32_System_Com",
     "Win32_System_Registry",
     "Win32_System_Threading",
+    "Win32_UI_Controls_Dialogs",
+    "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_WindowsAndMessaging",
 ] }
 

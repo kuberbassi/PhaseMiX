@@ -130,6 +130,9 @@ export function App() {
   const [stageOpen, setStageOpen] = useState(true);
   const [offline, setOffline] = useState(false);
   const [autostart, setAutostart] = useState(false);
+  const [calibrating, setCalibrating] = useState(false);
+  const [calStatus, setCalStatus] = useState<string | null>(null);
+  const [calError, setCalError] = useState(false);
   const [perfMode, setPerfMode] = useState<PerfMode>(() => {
     const saved =
       localStorage.getItem("phasemix_perf_mode") ?? localStorage.getItem("sonix_perf_mode");
@@ -467,6 +470,67 @@ export function App() {
       setAutostart(!enabled);
     }
   }, []);
+
+  const handleAutoCalibrate = useCallback(async () => {
+    if (calibrating) return;
+    setCalibrating(true);
+    setCalError(false);
+    setCalStatus("Playing BT + AUX chirps... keep room quiet for 2.5 s");
+    try {
+      const res = await mixerApi.calibrateSyncDelay();
+      applyFullPayload(res.status, true);
+      setCalError(!res.ok);
+      setCalStatus(res.message);
+    } catch (err) {
+      setCalError(true);
+      setCalStatus(err instanceof Error ? err.message : "Auto-align failed");
+    } finally {
+      setCalibrating(false);
+    }
+  }, [calibrating, applyFullPayload]);
+
+  const handleExportProfile = useCallback(async () => {
+    try {
+      const res = await mixerApi.exportProfile();
+      if (res.cancelled) return;
+      if (res.ok) {
+        const name = res.path?.split(/[/\\]/).pop() ?? "profile.json";
+        setCalError(false);
+        setCalStatus(`Exported profile to ${name}`);
+      }
+    } catch (err) {
+      setCalError(true);
+      setCalStatus(err instanceof Error ? err.message : "Profile export failed");
+    }
+  }, []);
+
+  const handleImportProfile = useCallback(async () => {
+    try {
+      const res = await mixerApi.importProfile();
+      if (res.cancelled) return;
+      if (res.ok && res.status) {
+        applyFullPayload(res.status, true);
+        const name = res.path?.split(/[/\\]/).pop() ?? "profile.json";
+        setCalError(false);
+        setCalStatus(`Loaded profile ${name}`);
+      }
+    } catch (err) {
+      setCalError(true);
+      setCalStatus(err instanceof Error ? err.message : "Invalid profile JSON");
+    }
+  }, [applyFullPayload]);
+
+  const handleResetFactory = useCallback(async () => {
+    try {
+      const st = await mixerApi.resetFactory();
+      applyFullPayload(st, true);
+      setCalError(false);
+      setCalStatus("Restored factory defaults (224 ms sync)");
+    } catch (err) {
+      setCalError(true);
+      setCalStatus(err instanceof Error ? err.message : "Reset failed");
+    }
+  }, [applyFullPayload]);
 
   const inputOptions = useMemo<GlideSelectOption[]>(() => {
     const base: GlideSelectOption[] = [{ value: "", label: "Test Signal Only", tag: "GEN" }];
@@ -849,8 +913,15 @@ export function App() {
                           <SystemProtectionDrawer
                             mixer={mixer}
                             autostart={autostart}
+                            calibrating={calibrating}
+                            calStatus={calStatus}
+                            calError={calError}
                             onPatch={patchMixer}
                             onToggleAutostart={(c) => void toggleAutostart(c)}
+                            onAutoCalibrate={() => void handleAutoCalibrate()}
+                            onExportProfile={() => void handleExportProfile()}
+                            onImportProfile={() => void handleImportProfile()}
+                            onResetFactory={() => void handleResetFactory()}
                           />
                         </Suspense>
                       </SmoothCollapse>
