@@ -25,6 +25,11 @@ export interface ProfileIoResult {
   status?: StatusPayload;
 }
 
+export interface ToastEvent {
+  text: string;
+  tone?: "info" | "success" | "warn";
+}
+
 export const IS_TAURI =
   typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
@@ -102,5 +107,23 @@ export async function subscribeMixerEvent(
   if (!IS_TAURI) return () => {};
   return await listen<MixerState>("phasemix:mixer", (event) => {
     onMixer(event.payload);
+  });
+}
+
+export async function subscribeDevicesEvent(
+  onDevices: (devices: DevicesResponse) => void
+): Promise<() => void> {
+  if (!IS_TAURI) return () => {};
+  return await listen<DevicesResponse>("phasemix:devices", (event) => {
+    onDevices(event.payload);
+  });
+}
+
+export async function subscribeToastEvent(
+  onToast: (toast: ToastEvent) => void
+): Promise<() => void> {
+  if (!IS_TAURI) return () => {};
+  return await listen<ToastEvent>("phasemix:toast", (event) => {
+    onToast(event.payload);
   });
 }

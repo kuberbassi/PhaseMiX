@@ -108,6 +108,8 @@ export interface StatusPayload {
     boat: WinEndpointVol | null;
     laptop: WinEndpointVol | null;
   };
+  default_output_name?: string;
+  default_output_is_virtual?: boolean;
 }
 
 export interface DevicesResponse {
@@ -117,6 +119,8 @@ export interface DevicesResponse {
   selected_names: StatusPayload["selected_names"];
   has_virtual_cable: boolean;
   win_vols: StatusPayload["win_vols"];
+  default_output_name?: string;
+  default_output_is_virtual?: boolean;
 }
 
 export interface StageLayout {

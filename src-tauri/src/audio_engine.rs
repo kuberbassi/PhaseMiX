@@ -633,6 +633,8 @@ pub struct StatusPayload {
     pub selected: SelectedIds,
     pub selected_names: SelectedNames,
     pub win_vols: WinVols,
+    pub default_output_name: String,
+    pub default_output_is_virtual: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -643,6 +645,8 @@ pub struct DevicesResponse {
     pub selected_names: SelectedNames,
     pub has_virtual_cable: bool,
     pub win_vols: WinVols,
+    pub default_output_name: String,
+    pub default_output_is_virtual: bool,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -873,6 +877,51 @@ pub fn list_wasapi_devices() -> (Vec<DeviceInfo>, Vec<DeviceInfo>, bool) {
     (inputs, outputs, has_virtual_cable)
 }
 
+fn is_virtual_audio_name(name: &str) -> bool {
+    let nl = name.to_lowercase();
+    nl.contains("steam streaming")
+        || nl.contains("vb-audio")
+        || nl.contains("cable")
+        || nl.contains("voicemeeter")
+}
+
+pub fn default_render_endpoint_info() -> (String, String, bool) {
+    ensure_com();
+    let Ok(enumerator) = DeviceEnumerator::new() else {
+        return (String::new(), String::new(), true);
+    };
+    let Ok(dev) = enumerator.get_default_device(Direction::Render) else {
+        return (String::new(), String::new(), true);
+    };
+    let id = dev.get_id().unwrap_or_default();
+    let name = dev.get_friendlyname().unwrap_or_default();
+    let is_virtual = is_virtual_audio_name(&name);
+    (id, name, is_virtual)
+}
+
+pub fn current_render_signature() -> String {
+    ensure_com();
+    let Ok(enumerator) = DeviceEnumerator::new() else {
+        return String::new();
+    };
+    let def_id = enumerator
+        .get_default_device(Direction::Render)
+        .and_then(|d| d.get_id())
+        .unwrap_or_default();
+    let mut ids: Vec<String> = Vec::new();
+    if let Ok(col) = enumerator.get_device_collection(Direction::Render) {
+        for dev in (&col).into_iter().flatten() {
+            if matches!(dev.get_state(), Ok(DeviceState::Active)) {
+                if let Ok(id) = dev.get_id() {
+                    ids.push(id);
+                }
+            }
+        }
+    }
+    ids.sort();
+    format!("{def_id}|{}", ids.join(","))
+}
+
 fn find_id_by_name(list: &[DeviceInfo], saved: &str) -> Option<String> {
     if saved.is_empty() {
         return None;
@@ -924,10 +973,27 @@ fn pick_default_devices(
 
     let mut boat_id = find_id_by_name(outputs, &saved.boat_name).unwrap_or_default();
     if boat_id.is_empty() && saved.boat_name.is_empty() {
-        for pat in ["headphones (stone", "stone 358", "headphones (3.0 bt", "headphones ("] {
+        for pat in [
+            "headphones (stone",
+            "stone 358",
+            "headphones (3.0 bt",
+            "bluetooth",
+            "bt",
+            "soundcore",
+            "jbl",
+            "sony",
+            "bose",
+            "marshall",
+            "headphones (",
+        ] {
             if let Some(d) = outputs.iter().find(|d| {
                 let nl = d.name.to_lowercase();
-                nl.contains(pat) && !nl.contains("realtek") && d.id != intex_id
+                nl.contains(pat)
+                    && !nl.contains("realtek")
+                    && !nl.contains("hands-free")
+                    && !nl.contains("ag audio")
+                    && !is_virtual_audio_name(&nl)
+                    && d.id != intex_id
             }) {
                 boat_id = d.id.clone();
                 break;
@@ -1243,6 +1309,7 @@ impl AudioRouterEngine {
         }
 
         let win_vols = query_selected_win_vols(&picked);
+        let (_, default_output_name, default_output_is_virtual) = default_render_endpoint_info();
         let changed = picked.input_id != prev_ids.input_id
             || picked.intex_id != prev_ids.intex_id
             || picked.boat_id != prev_ids.boat_id
@@ -1259,6 +1326,8 @@ impl AudioRouterEngine {
             selected_names: new_names,
             has_virtual_cable: has_vc,
             win_vols,
+            default_output_name,
+            default_output_is_virtual,
         }
     }
 
@@ -1634,6 +1703,7 @@ impl AudioRouterEngine {
 
     pub fn status_payload(&self) -> StatusPayload {
         let ids = self.inner.selected_ids.read().clone();
+        let (_, default_output_name, default_output_is_virtual) = default_render_endpoint_info();
         StatusPayload {
             running: self.inner.running.load(Ordering::SeqCst),
             mixer: self.inner.mixer.read().clone(),
@@ -1642,6 +1712,8 @@ impl AudioRouterEngine {
             selected_names: self.inner.selected_names.read().clone(),
             win_vols: query_selected_win_vols(&ids),
             selected: ids,
+            default_output_name,
+            default_output_is_virtual,
         }
     }
 

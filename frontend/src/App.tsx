@@ -3,12 +3,16 @@ import { AnimatePresence, motion } from "motion/react";
 import {
   ArrowsClockwise,
   Bluetooth,
+  CheckCircle,
   Compass,
   Cube,
   Equalizer,
   FilmSlate,
   Gauge,
   Laptop,
+  Layout,
+  LinkBreak,
+  LinkSimple,
   MoonStars,
   MusicNotes,
   Play,
@@ -35,7 +39,16 @@ import { SpeakerRow } from "@/components/SpeakerRow";
 import SplitFlapText from "@/components/SplitFlapText";
 import SquishSwitch from "@/components/SquishSwitch";
 import WarmTooltip, { WarmTooltipGroup } from "@/components/WarmTooltip";
-import { IS_TAURI, mixerApi, subscribeMetersEvent, subscribeMixerEvent, type FastMetersResponse } from "@/lib/api";
+import {
+  IS_TAURI,
+  mixerApi,
+  subscribeDevicesEvent,
+  subscribeMetersEvent,
+  subscribeMixerEvent,
+  subscribeToastEvent,
+  type FastMetersResponse,
+  type ToastEvent,
+} from "@/lib/api";
 import { telemetryStore } from "@/lib/telemetryStore";
 import {
   POSITION_PRESETS,
@@ -133,6 +146,26 @@ export function App() {
   const [calibrating, setCalibrating] = useState(false);
   const [calStatus, setCalStatus] = useState<string | null>(null);
   const [calError, setCalError] = useState(false);
+  const [compactMode, setCompactMode] = useState<boolean>(
+    () => localStorage.getItem("phasemix_compact_mode") === "1"
+  );
+  const [delayLinked, setDelayLinked] = useState<boolean>(
+    () => localStorage.getItem("phasemix_delay_linked") !== "0"
+  );
+  const delayLinkedRef = useRef(delayLinked);
+  delayLinkedRef.current = delayLinked;
+
+  const [toast, setToast] = useState<ToastEvent | null>(null);
+  const toastTimerRef = useRef<number | null>(null);
+  const showToast = useCallback((text: string, tone: ToastEvent["tone"] = "info") => {
+    setToast({ text, tone });
+    if (toastTimerRef.current !== null) window.clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = window.setTimeout(() => {
+      toastTimerRef.current = null;
+      setToast(null);
+    }, 2600);
+  }, []);
+
   const [perfMode, setPerfMode] = useState<PerfMode>(() => {
     const saved =
       localStorage.getItem("phasemix_perf_mode") ?? localStorage.getItem("sonix_perf_mode");
@@ -244,6 +277,7 @@ export function App() {
       window.removeEventListener("pagehide", flushOnHide);
       if (patchTimerRef.current !== null) window.clearTimeout(patchTimerRef.current);
       if (winTimerRef.current !== null) window.clearTimeout(winTimerRef.current);
+      if (toastTimerRef.current !== null) window.clearTimeout(toastTimerRef.current);
     };
   }, []);
 
@@ -283,6 +317,8 @@ export function App() {
     if (IS_TAURI) {
       let unlistenMeters: (() => void) | null = null;
       let unlistenMixer: (() => void) | null = null;
+      let unlistenDevices: (() => void) | null = null;
+      let unlistenToast: (() => void) | null = null;
       void subscribeMetersEvent(handleMeters).then((fn) => {
         if (alive) {
           unlistenMeters = fn;
@@ -302,6 +338,28 @@ export function App() {
           fn();
         }
       });
+      void subscribeDevicesEvent((d) => {
+        if (!alive) return;
+        setDevices(d);
+        setSelected(d.selected);
+        if (d.win_vols) setWinVols(d.win_vols);
+      }).then((fn) => {
+        if (alive) {
+          unlistenDevices = fn;
+        } else {
+          fn();
+        }
+      });
+      void subscribeToastEvent((t) => {
+        if (!alive) return;
+        showToast(t.text, t.tone ?? "info");
+      }).then((fn) => {
+        if (alive) {
+          unlistenToast = fn;
+        } else {
+          fn();
+        }
+      });
       const onVis = () => {
         if (!document.hidden && alive) {
           void mixerApi.getMeters().then(handleMeters).catch(() => {});
@@ -313,6 +371,8 @@ export function App() {
         document.removeEventListener("visibilitychange", onVis);
         unlistenMeters?.();
         unlistenMixer?.();
+        unlistenDevices?.();
+        unlistenToast?.();
       };
     }
 
@@ -342,7 +402,7 @@ export function App() {
       document.removeEventListener("visibilitychange", onVisChange);
       window.clearInterval(id);
     };
-  }, [perfMode]);
+  }, [perfMode, showToast]);
 
   const flushPatch = useCallback(() => {
     const batch = pendingPatchRef.current;
@@ -356,6 +416,13 @@ export function App() {
     (patch: Partial<MixerState>) => {
       lastLocalEditRef.current = Date.now();
       const toSend = { ...patch };
+      if (delayLinkedRef.current) {
+        if (toSend.intex_delay_ms !== undefined && toSend.laptop_delay_ms === undefined) {
+          toSend.laptop_delay_ms = toSend.intex_delay_ms;
+        } else if (toSend.laptop_delay_ms !== undefined && toSend.intex_delay_ms === undefined) {
+          toSend.intex_delay_ms = toSend.laptop_delay_ms;
+        }
+      }
       setMixer((prev) => {
         const next = { ...prev, ...toSend };
         if (next.protection_enabled && next.master_vol > next.protection_max_master) {
@@ -481,13 +548,16 @@ export function App() {
       applyFullPayload(res.status, true);
       setCalError(!res.ok);
       setCalStatus(res.message);
+      showToast(res.message, res.ok ? "success" : "warn");
     } catch (err) {
+      const msg = err instanceof Error ? err.message : "Auto-align failed";
       setCalError(true);
-      setCalStatus(err instanceof Error ? err.message : "Auto-align failed");
+      setCalStatus(msg);
+      showToast(msg, "warn");
     } finally {
       setCalibrating(false);
     }
-  }, [calibrating, applyFullPayload]);
+  }, [calibrating, applyFullPayload, showToast]);
 
   const handleExportProfile = useCallback(async () => {
     try {
@@ -497,12 +567,15 @@ export function App() {
         const name = res.path?.split(/[/\\]/).pop() ?? "profile.json";
         setCalError(false);
         setCalStatus(`Exported profile to ${name}`);
+        showToast(`Exported ${name}`, "success");
       }
     } catch (err) {
+      const msg = err instanceof Error ? err.message : "Profile export failed";
       setCalError(true);
-      setCalStatus(err instanceof Error ? err.message : "Profile export failed");
+      setCalStatus(msg);
+      showToast(msg, "warn");
     }
-  }, []);
+  }, [showToast]);
 
   const handleImportProfile = useCallback(async () => {
     try {
@@ -513,12 +586,15 @@ export function App() {
         const name = res.path?.split(/[/\\]/).pop() ?? "profile.json";
         setCalError(false);
         setCalStatus(`Loaded profile ${name}`);
+        showToast(`Loaded ${name}`, "success");
       }
     } catch (err) {
+      const msg = err instanceof Error ? err.message : "Invalid profile JSON";
       setCalError(true);
-      setCalStatus(err instanceof Error ? err.message : "Invalid profile JSON");
+      setCalStatus(msg);
+      showToast(msg, "warn");
     }
-  }, [applyFullPayload]);
+  }, [applyFullPayload, showToast]);
 
   const handleResetFactory = useCallback(async () => {
     try {
@@ -526,11 +602,46 @@ export function App() {
       applyFullPayload(st, true);
       setCalError(false);
       setCalStatus("Restored factory defaults (224 ms sync)");
+      showToast("Factory defaults restored", "info");
     } catch (err) {
+      const msg = err instanceof Error ? err.message : "Reset failed";
       setCalError(true);
-      setCalStatus(err instanceof Error ? err.message : "Reset failed");
+      setCalStatus(msg);
+      showToast(msg, "warn");
     }
-  }, [applyFullPayload]);
+  }, [applyFullPayload, showToast]);
+
+  const toggleCompactMode = useCallback(() => {
+    setCompactMode((v) => {
+      const next = !v;
+      localStorage.setItem("phasemix_compact_mode", next ? "1" : "0");
+      return next;
+    });
+  }, []);
+
+  const toggleDelayLink = useCallback(() => {
+    setDelayLinked((prev) => {
+      const next = !prev;
+      localStorage.setItem("phasemix_delay_linked", next ? "1" : "0");
+      if (next) {
+        patchMixer({ laptop_delay_ms: mixer.intex_delay_ms });
+        showToast(`Delays linked (${mixer.intex_delay_ms} ms)`, "info");
+      } else {
+        showToast("Independent speaker delays enabled", "info");
+      }
+      return next;
+    });
+  }, [patchMixer, mixer.intex_delay_ms, showToast]);
+
+  const handle3dSolo = useCallback(
+    (r: Role) => {
+      const next = mixer.solo === r ? null : r;
+      patchMixer({ solo: next });
+      const label = r === "intex" ? "Primary 2.1" : r === "boat" ? "Center Wireless" : "Built-in";
+      showToast(next ? `Soloed ${label}` : "Solo cleared", "info");
+    },
+    [mixer.solo, patchMixer, showToast]
+  );
 
   const inputOptions = useMemo<GlideSelectOption[]>(() => {
     const base: GlideSelectOption[] = [{ value: "", label: "Test Signal Only", tag: "GEN" }];
@@ -556,11 +667,22 @@ export function App() {
 
   const outputOptions = useMemo<GlideSelectOption[]>(() => {
     const base: GlideSelectOption[] = [{ value: "", label: "Disabled", tag: "OFF" }];
+    const selectedSet = new Set([selected.intex_id, selected.boat_id, selected.laptop_id]);
+    const stereoNames = new Set(
+      (devices?.outputs ?? [])
+        .map((d) => d.name.toLowerCase())
+        .filter((nl) => !nl.includes("hands-free") && !nl.includes("ag audio"))
+    );
+
     for (const d of devices?.outputs ?? []) {
       const nl = d.name.toLowerCase();
       const isVirtualSink = nl.includes("steam streaming") || nl.includes("cable input");
-      const isSelected = [selected.intex_id, selected.boat_id, selected.laptop_id].includes(String(d.id));
+      const isSelected = selectedSet.has(String(d.id));
       if (isVirtualSink && !isSelected) continue;
+
+      // Filter cluttered HFP Hands-Free duplicates whenever a Stereo output exists
+      const isHandsFree = nl.includes("hands-free") || nl.includes("ag audio");
+      if (isHandsFree && !isSelected && stereoNames.size > 0) continue;
 
       let shortLabel = d.name;
       let tag = "OUT";
@@ -576,13 +698,46 @@ export function App() {
       } else if (nl.includes("3.0 bt")) {
         shortLabel = "3.0 BT Receiver";
         tag = "BT";
-      } else if (nl.includes("bt") || nl.includes("bluetooth") || nl.includes("anc")) {
+      } else if (
+        nl.includes("bt") ||
+        nl.includes("bluetooth") ||
+        nl.includes("anc") ||
+        nl.includes("soundcore") ||
+        nl.includes("jbl") ||
+        nl.includes("sony") ||
+        nl.includes("bose") ||
+        nl.includes("marshall") ||
+        nl.includes("sennheiser") ||
+        nl.includes("jabra") ||
+        nl.includes("beats") ||
+        nl.includes("airpods") ||
+        nl.includes("earbuds") ||
+        nl.includes("wh-") ||
+        nl.includes("wf-") ||
+        nl.includes("qc")
+      ) {
         tag = "BT";
+      } else if (nl.includes("usb") || nl.includes("dac") || nl.includes("focusrite") || nl.includes("scarlett")) {
+        tag = "USB";
+      } else if (nl.includes("hdmi") || nl.includes("nvidia") || nl.includes("display") || nl.includes("amd")) {
+        tag = "HDMI";
       }
       base.push({ value: String(d.id), label: shortLabel, tag });
     }
     return base;
   }, [devices, selected.intex_id, selected.boat_id, selected.laptop_id]);
+
+  const isVirtualInputSelected = useMemo(() => {
+    const d = devices?.inputs.find((x) => String(x.id) === String(selected.input_id));
+    if (!d) return false;
+    const nl = d.name.toLowerCase();
+    return nl.includes("steam streaming") || nl.includes("cable") || nl.includes("voicemeeter");
+  }, [devices, selected.input_id]);
+
+  const showDefaultOutputGuard =
+    isVirtualInputSelected &&
+    devices?.default_output_is_virtual === false &&
+    Boolean(devices?.default_output_name);
 
   const effectiveMaster = mixer.protection_enabled
     ? Math.min(mixer.master_vol, mixer.protection_max_master)
@@ -605,7 +760,9 @@ export function App() {
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
-          className="relative z-10 w-full max-w-[1720px]"
+          className={`relative z-10 w-full transition-[max-width] duration-300 ${
+            compactMode ? "max-w-[820px]" : "max-w-[1720px]"
+          }`}
         >
           <div className="relative overflow-visible rounded-3xl border border-white/[0.07] bg-[#16171b]/95 p-4 shadow-[0_28px_80px_rgba(0,0,0,0.72)] sm:p-5">
             {/* Top Smoked Aurora Wave */}
@@ -672,6 +829,26 @@ export function App() {
                     />
                     <span className="text-[11px] font-medium text-zinc-300">Ear-Safe</span>
                   </div>
+                </WarmTooltip>
+
+                <WarmTooltip
+                  content={compactMode ? "Expand full 3D soundstage view" : "Collapse into compact dock layout"}
+                  surfaceColor="#242730"
+                  inkColor="#f4f5f7"
+                  size="sm"
+                >
+                  <button
+                    type="button"
+                    onClick={toggleCompactMode}
+                    className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[11px] font-medium transition ${
+                      compactMode
+                        ? "border-emerald-500/35 bg-emerald-500/15 text-emerald-200 hover:bg-emerald-500/25"
+                        : "border-white/[0.07] bg-[#202228] text-zinc-300 hover:bg-[#2a2d35] hover:text-white"
+                    }`}
+                  >
+                    <Layout size={13} />
+                    {compactMode ? "Full View" : "Compact"}
+                  </button>
                 </WarmTooltip>
 
                 <WarmTooltip
@@ -748,7 +925,7 @@ export function App() {
                 <motion.div
                   key="offline-banner"
                   initial={{ opacity: 0, height: 0, marginBottom: 0 }}
-                  animate={{ opacity: 1, height: "auto", marginBottom: 16 }}
+                  animate={{ opacity: 1, height: "auto", marginBottom: 12 }}
                   exit={{ opacity: 0, height: 0, marginBottom: 0 }}
                   transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
                   className="overflow-hidden"
@@ -769,11 +946,36 @@ export function App() {
                 </motion.div>
               )}
 
+              {showDefaultOutputGuard && (
+                <motion.div
+                  key="default-out-banner"
+                  initial={{ opacity: 0, height: 0, marginBottom: 0 }}
+                  animate={{ opacity: 1, height: "auto", marginBottom: 12 }}
+                  exit={{ opacity: 0, height: 0, marginBottom: 0 }}
+                  transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+                  className="overflow-hidden"
+                >
+                  <div className="flex items-center justify-between gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3.5 py-2 text-xs text-amber-200">
+                    <span className="flex items-center gap-2">
+                      <ShieldWarning size={15} className="shrink-0 text-amber-400" />
+                      Windows playback switched to &ldquo;{devices?.default_output_name}&rdquo; — set Steam Streaming Speakers as default output for audio capture.
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => void mixerApi.openSoundSettings()}
+                      className="shrink-0 rounded-md bg-white/15 px-2.5 py-1 text-[11px] font-medium text-white hover:bg-white/25"
+                    >
+                      Sound Settings
+                    </button>
+                  </div>
+                </motion.div>
+              )}
+
               {anyMuted && (
                 <motion.div
                   key="muted-banner"
                   initial={{ opacity: 0, height: 0, marginBottom: 0 }}
-                  animate={{ opacity: 1, height: "auto", marginBottom: 16 }}
+                  animate={{ opacity: 1, height: "auto", marginBottom: 12 }}
                   exit={{ opacity: 0, height: 0, marginBottom: 0 }}
                   transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
                   className="overflow-hidden"
@@ -795,10 +997,33 @@ export function App() {
               )}
             </AnimatePresence>
 
+            {compactMode && (
+              <div className="mb-3.5 flex flex-wrap items-center gap-1.5">
+                {POSITION_PRESETS.map((p) => {
+                  const active = mixer.position_preset === p.id;
+                  return (
+                    <button
+                      key={p.id}
+                      type="button"
+                      onClick={() => applyPreset(p)}
+                      className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[11px] font-medium transition ${
+                        active
+                          ? "border-white/30 bg-white/15 text-white"
+                          : "border-white/[0.06] bg-[#141519] text-zinc-400 hover:bg-[#1e2026] hover:text-zinc-200"
+                      }`}
+                    >
+                      {presetIcon(p.id)}
+                      {p.name}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
             {/* FULL-WIDTH 12-COLUMN STUDIO GRID */}
             <div className="grid grid-cols-1 gap-6 xl:grid-cols-12">
-              {/* LEFT 7 COLS: SYSTEM + ACTIVE SPEAKERS */}
-              <div className="flex flex-col gap-4 xl:col-span-7">
+              {/* LEFT 7 COLS (OR FULL IN COMPACT): SYSTEM + ACTIVE SPEAKERS */}
+              <div className={`flex flex-col gap-4 ${compactMode ? "xl:col-span-12" : "xl:col-span-7"}`}>
                 {/* SYSTEM SECTION */}
                 <section>
                   <div className="mb-2 flex items-center justify-between px-1">
@@ -983,11 +1208,32 @@ export function App() {
 
                 {/* ACTIVE SPEAKERS SECTION */}
                 <section>
-                  <div className="mb-2 flex items-center justify-between px-1">
+                  <div className="mb-2 flex flex-wrap items-center justify-between gap-2 px-1">
                     <h2 className="text-xs font-medium text-zinc-400">Active speakers</h2>
-                    <span className="text-[11px] text-zinc-500">
-                      Click sliders icon on any speaker for 3-Band EQ &amp; Delay
-                    </span>
+                    <div className="flex items-center gap-2.5">
+                      <WarmTooltip
+                        content="Mirror AUX sync delay onto Built-in speakers automatically"
+                        surfaceColor="#242730"
+                        inkColor="#f4f5f7"
+                        size="sm"
+                      >
+                        <button
+                          type="button"
+                          onClick={toggleDelayLink}
+                          className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[10.5px] font-medium transition ${
+                            delayLinked
+                              ? "border-emerald-500/35 bg-emerald-500/15 text-emerald-300"
+                              : "border-white/[0.08] bg-[#202228] text-zinc-400 hover:text-zinc-200"
+                          }`}
+                        >
+                          {delayLinked ? <LinkSimple size={12} /> : <LinkBreak size={12} />}
+                          {delayLinked ? `AUX+PC Linked (${mixer.intex_delay_ms} ms)` : "Delays Unlinked"}
+                        </button>
+                      </WarmTooltip>
+                      <span className="hidden text-[11px] text-zinc-500 sm:inline">
+                        Click sliders icon for EQ &amp; Delay
+                      </span>
+                    </div>
                   </div>
 
                   <div className="flex flex-col gap-2">
@@ -1043,84 +1289,115 @@ export function App() {
               </div>
 
               {/* RIGHT 5 COLS: 3D SOUNDSTAGE + POSITION PRESETS */}
-              <div className="flex flex-col gap-4 xl:col-span-5">
-                <section className="flex h-full flex-col">
-                  <div className="mb-2 flex items-center justify-between px-1">
-                    <h2 className="text-xs font-medium text-zinc-400">3D Soundstage &amp; Position Presets</h2>
-                    <WarmTooltip
-                      content="Toggle live 3D room soundstage visualizer"
-                      surfaceColor="#242730"
-                      inkColor="#f4f5f7"
-                      size="sm"
-                    >
-                      <button
-                        type="button"
-                        onClick={() => setStageOpen((v) => !v)}
-                        className="inline-flex items-center gap-1.5 rounded-lg bg-[#22242b] px-2.5 py-1 text-[11px] font-medium text-zinc-300 transition hover:bg-[#2b2e37] hover:text-white"
+              {!compactMode && (
+                <div className="flex flex-col gap-4 xl:col-span-5">
+                  <section className="flex h-full flex-col">
+                    <div className="mb-2 flex items-center justify-between px-1">
+                      <h2 className="text-xs font-medium text-zinc-400">3D Soundstage &amp; Position Presets</h2>
+                      <WarmTooltip
+                        content="Toggle live 3D room soundstage visualizer"
+                        surfaceColor="#242730"
+                        inkColor="#f4f5f7"
+                        size="sm"
                       >
-                        <Cube size={13} />
-                        {stageOpen ? "Hide 3D Room" : "Show 3D Room"}
-                      </button>
-                    </WarmTooltip>
-                  </div>
-
-                  <div className="flex flex-1 flex-col gap-4 rounded-2xl border border-white/[0.06] bg-[#1a1c21] p-4">
-                    <SmoothCollapse open={stageOpen}>
-                      <Suspense
-                        fallback={
-                          <div className="flex h-[280px] items-center justify-center rounded-xl border border-white/[0.06] bg-[#141519] text-xs text-zinc-500 sm:h-[320px]">
-                            Loading 3D Speaker Stage...
-                          </div>
-                        }
-                      >
-                        <SpeakerStage3D
-                          mixer={mixer}
-                          targetFps={perfMode === "eco" ? 15 : perfMode === "studio" ? 60 : 30}
-                          paused={!stageOpen}
-                        />
-                      </Suspense>
-                    </SmoothCollapse>
-
-                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                      {POSITION_PRESETS.map((p) => {
-                        const active = mixer.position_preset === p.id;
-                        return (
-                          <button
-                            key={p.id}
-                            type="button"
-                            onClick={() => applyPreset(p)}
-                            className={`flex flex-col justify-between gap-1 rounded-xl border p-3 text-left transition ${
-                              active
-                                ? "border-white/30 bg-white/[0.09] shadow-sm"
-                                : "border-white/[0.05] bg-[#141519] hover:border-white/[0.12] hover:bg-[#1d1f26]"
-                            }`}
-                          >
-                            <div className="flex w-full items-center justify-between gap-2">
-                              <span
-                                className={`flex items-center gap-1.5 text-xs font-medium ${
-                                  active ? "text-white" : "text-zinc-200"
-                                }`}
-                              >
-                                {presetIcon(p.id)}
-                                {p.name}
-                              </span>
-                              <span className="rounded bg-white/[0.07] px-1.5 py-0.5 font-mono text-[9px] text-zinc-400">
-                                {p.badge}
-                              </span>
-                            </div>
-                            <p className="text-[11px] leading-snug text-zinc-500">{p.subtitle}</p>
-                          </button>
-                        );
-                      })}
+                        <button
+                          type="button"
+                          onClick={() => setStageOpen((v) => !v)}
+                          className="inline-flex items-center gap-1.5 rounded-lg bg-[#22242b] px-2.5 py-1 text-[11px] font-medium text-zinc-300 transition hover:bg-[#2b2e37] hover:text-white"
+                        >
+                          <Cube size={13} />
+                          {stageOpen ? "Hide 3D Room" : "Show 3D Room"}
+                        </button>
+                      </WarmTooltip>
                     </div>
-                  </div>
-                </section>
-              </div>
+
+                    <div className="flex flex-1 flex-col gap-4 rounded-2xl border border-white/[0.06] bg-[#1a1c21] p-4">
+                      <SmoothCollapse open={stageOpen}>
+                        <Suspense
+                          fallback={
+                            <div className="flex h-[280px] items-center justify-center rounded-xl border border-white/[0.06] bg-[#141519] text-xs text-zinc-500 sm:h-[320px]">
+                              Loading 3D Speaker Stage...
+                            </div>
+                          }
+                        >
+                          <SpeakerStage3D
+                            mixer={mixer}
+                            targetFps={perfMode === "eco" ? 15 : perfMode === "studio" ? 60 : 30}
+                            paused={!stageOpen || compactMode}
+                            onSoloRole={handle3dSolo}
+                          />
+                        </Suspense>
+                      </SmoothCollapse>
+
+                      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                        {POSITION_PRESETS.map((p) => {
+                          const active = mixer.position_preset === p.id;
+                          return (
+                            <button
+                              key={p.id}
+                              type="button"
+                              onClick={() => applyPreset(p)}
+                              className={`flex flex-col justify-between gap-1 rounded-xl border p-3 text-left transition ${
+                                active
+                                  ? "border-white/30 bg-white/[0.09] shadow-sm"
+                                  : "border-white/[0.05] bg-[#141519] hover:border-white/[0.12] hover:bg-[#1d1f26]"
+                              }`}
+                            >
+                              <div className="flex w-full items-center justify-between gap-2">
+                                <span
+                                  className={`flex items-center gap-1.5 text-xs font-medium ${
+                                    active ? "text-white" : "text-zinc-200"
+                                  }`}
+                                >
+                                  {presetIcon(p.id)}
+                                  {p.name}
+                                </span>
+                                <span className="rounded bg-white/[0.07] px-1.5 py-0.5 font-mono text-[9px] text-zinc-400">
+                                  {p.badge}
+                                </span>
+                              </div>
+                              <p className="text-[11px] leading-snug text-zinc-500">{p.subtitle}</p>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </section>
+                </div>
+              )}
             </div>
 
             <LiveTelemetryFooter />
           </div>
         </motion.div>
+
+        <AnimatePresence>
+          {toast && (
+            <motion.div
+              key={toast.text}
+              initial={{ opacity: 0, y: 12, scale: 0.96 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 8, scale: 0.96 }}
+              transition={{ duration: 0.18 }}
+              className={`pointer-events-none fixed bottom-5 right-5 z-50 flex items-center gap-2 rounded-xl border px-3.5 py-2 text-xs font-medium shadow-2xl backdrop-blur-md ${
+                toast.tone === "success"
+                  ? "border-emerald-500/40 bg-emerald-950/85 text-emerald-200"
+                  : toast.tone === "warn"
+                    ? "border-amber-500/40 bg-amber-950/85 text-amber-200"
+                    : "border-white/15 bg-[#1b1d24]/95 text-zinc-100"
+              }`}
+            >
+              {toast.tone === "success" ? (
+                <CheckCircle size={15} className="text-emerald-400" weight="fill" />
+              ) : toast.tone === "warn" ? (
+                <ShieldWarning size={15} className="text-amber-400" weight="fill" />
+              ) : (
+                <Sliders size={14} className="text-zinc-300" />
+              )}
+              <span>{toast.text}</span>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
     </WarmTooltipGroup>
   );

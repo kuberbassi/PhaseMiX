@@ -1,6 +1,7 @@
 import { memo } from "react";
 import { ArrowsCounterClockwise } from "@phosphor-icons/react";
 import CometDial from "@/components/CometDial";
+import EqCurveChart from "@/components/EqCurveChart";
 import GlideSelect from "@/components/GlideSelect";
 import { LedEqColumn } from "@/components/LedMeter";
 import { LiveActualMs, LiveGuardBadge } from "@/components/LiveWidgets";
@@ -137,39 +138,42 @@ export const SpeakerEqDrawer = memo(function SpeakerEqDrawer({
 
       {/* Main EQ + Acoustic Controls Grid */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
-        {/* 3-Band EQ Knobs + Segmented LED Columns */}
-        <div className="flex items-center justify-around gap-3 rounded-xl border border-white/[0.05] bg-[#121317] p-3.5 lg:col-span-6">
-          {[
-            { label: "Bass", freq: "110 Hz", val: bassDb, key: bassKey },
-            { label: "Mids", freq: "1.0 kHz", val: midDb, key: midKey },
-            { label: "Treble", freq: "4.5 kHz", val: trebleDb, key: trebleKey },
-          ].map((band) => (
-            <div key={band.label} className="flex items-end gap-1.5">
-              <div
-                onDoubleClick={() => onPatch({ [band.key]: 0 } as Partial<MixerState>)}
-                title="Double-click to reset 0 dB"
-                className="flex flex-col items-center gap-1.5"
-              >
-                <CometDial
-                  value={band.val}
-                  min={-12}
-                  max={12}
-                  step={0.5}
-                  unit="dB"
-                  label={band.label}
-                  size={74}
-                  thickness={7}
-                  speed={45}
-                  cometReach={100}
-                  accent="#f4f5f7"
-                  ink="#a1a1aa"
-                  onChange={(v) => onPatch({ [band.key]: v } as Partial<MixerState>)}
-                />
-                <span className="text-[11px] font-medium leading-none text-zinc-300">{band.label}</span>
+        {/* 3-Band EQ Knobs + Segmented LED Columns + Live Frequency Response Curve */}
+        <div className="flex flex-col justify-between gap-2 rounded-xl border border-white/[0.05] bg-[#121317] p-3.5 lg:col-span-6">
+          <div className="flex items-center justify-around gap-3">
+            {[
+              { label: "Bass", freq: "110 Hz", val: bassDb, key: bassKey },
+              { label: "Mids", freq: "1.0 kHz", val: midDb, key: midKey },
+              { label: "Treble", freq: "4.5 kHz", val: trebleDb, key: trebleKey },
+            ].map((band) => (
+              <div key={band.label} className="flex items-end gap-1.5">
+                <div
+                  onDoubleClick={() => onPatch({ [band.key]: 0 } as Partial<MixerState>)}
+                  title="Double-click to reset 0 dB"
+                  className="flex flex-col items-center gap-1.5"
+                >
+                  <CometDial
+                    value={band.val}
+                    min={-12}
+                    max={12}
+                    step={0.5}
+                    unit="dB"
+                    label={band.label}
+                    size={74}
+                    thickness={7}
+                    speed={45}
+                    cometReach={100}
+                    accent="#f4f5f7"
+                    ink="#a1a1aa"
+                    onChange={(v) => onPatch({ [band.key]: v } as Partial<MixerState>)}
+                  />
+                  <span className="text-[11px] font-medium leading-none text-zinc-300">{band.label}</span>
+                </div>
+                <LedEqColumn label={band.freq} db={band.val} />
               </div>
-              <LedEqColumn label={band.freq} db={band.val} />
-            </div>
-          ))}
+            ))}
+          </div>
+          <EqCurveChart role={role} mixer={mixer} />
         </div>
 
         {/* Delay Sync, Crossovers & Windows HW Level */}

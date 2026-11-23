@@ -1,6 +1,6 @@
 [package]
 name = "phasemix"
-version = "3.3.0"
+version = "3.4.0"
 description = "PhaseMiX multi-output Windows WASAPI router & studio console"
 authors = ["kuberbassi"]
 edition = "2024"

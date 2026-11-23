@@ -8,7 +8,7 @@ use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use tauri::{
@@ -35,9 +35,15 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 use windows::Win32::UI::WindowsAndMessaging::{PeekMessageW, MSG, PM_REMOVE, WM_HOTKEY};
 
 use audio_engine::{
-    default_config_path, AudioRouterEngine, CalibrationResult, DevicesResponse, FastMetersEvent,
-    MixerPatch, MixerState, SelectedIds, StatusPayload,
+    current_render_signature, default_config_path, AudioRouterEngine, CalibrationResult,
+    DevicesResponse, FastMetersEvent, MixerPatch, MixerState, SelectedIds, StatusPayload,
 };
+
+#[derive(Clone, Serialize)]
+pub struct ToastEventPayload {
+    pub text: String,
+    pub tone: &'static str,
+}
 
 pub struct TrayUiState {
     pub tray: TrayIcon<Wry>,
@@ -635,12 +641,32 @@ pub fn run() {
                             master_mute: Some(!cur_mute),
                             ..Default::default()
                         });
+                        let msg = if updated.master_mute {
+                            "Master Muted"
+                        } else {
+                            "Master Unmuted"
+                        };
                         let _ = app_h.emit("phasemix:mixer", updated);
+                        let _ = app_h.emit(
+                            "phasemix:toast",
+                            ToastEventPayload {
+                                text: msg.to_string(),
+                                tone: if !cur_mute { "warn" } else { "info" },
+                            },
+                        );
                         sync_tray_ui(app_h, true);
                     } else if let Some(preset_id) = id.strip_prefix("preset:") {
                         let st = app_h.state::<AppState>();
                         if let Some(updated) = st.engine.apply_preset(preset_id) {
+                            let label = preset_short_label(&updated.position_preset);
                             let _ = app_h.emit("phasemix:mixer", updated);
+                            let _ = app_h.emit(
+                                "phasemix:toast",
+                                ToastEventPayload {
+                                    text: format!("Preset: {label}"),
+                                    tone: "info",
+                                },
+                            );
                         }
                         sync_tray_ui(app_h, true);
                     } else if id == "quit" {
@@ -700,20 +726,57 @@ pub fn run() {
                             .as_bool()
                         {
                             let st = hk_handle.state::<AppState>();
-                            let updated = match msg.wParam.0 as i32 {
-                                1 => {
-                                    let cur = st.engine.fast_meters_event().master_mute;
-                                    Some(st.engine.update_mixer(MixerPatch {
-                                        master_mute: Some(!cur),
-                                        ..Default::default()
-                                    }))
-                                }
-                                2 => Some(st.engine.cycle_smart_preset()),
-                                3 => Some(st.engine.toggle_night_guard()),
-                                _ => None,
-                            };
+                            let (updated, toast): (Option<MixerState>, Option<ToastEventPayload>) =
+                                match msg.wParam.0 as i32 {
+                                    1 => {
+                                        let cur = st.engine.fast_meters_event().master_mute;
+                                        let next = st.engine.update_mixer(MixerPatch {
+                                            master_mute: Some(!cur),
+                                            ..Default::default()
+                                        });
+                                        let t = ToastEventPayload {
+                                            text: if next.master_mute {
+                                                "Master Muted".to_string()
+                                            } else {
+                                                "Master Unmuted".to_string()
+                                            },
+                                            tone: if next.master_mute { "warn" } else { "info" },
+                                        };
+                                        (Some(next), Some(t))
+                                    }
+                                    2 => {
+                                        let next = st.engine.cycle_smart_preset();
+                                        let label = preset_short_label(&next.position_preset);
+                                        let t = ToastEventPayload {
+                                            text: format!("Preset: {label}"),
+                                            tone: "info",
+                                        };
+                                        (Some(next), Some(t))
+                                    }
+                                    3 => {
+                                        let next = st.engine.toggle_night_guard();
+                                        let t = if next.position_preset == "night_safe" {
+                                            ToastEventPayload {
+                                                text: "Midnight Guard On (-15 dB)".to_string(),
+                                                tone: "success",
+                                            }
+                                        } else {
+                                            let label =
+                                                preset_short_label(&next.position_preset);
+                                            ToastEventPayload {
+                                                text: format!("Midnight Guard Off • {label}"),
+                                                tone: "info",
+                                            }
+                                        };
+                                        (Some(next), Some(t))
+                                    }
+                                    _ => (None, None),
+                                };
                             if let Some(m) = updated {
                                 let _ = hk_handle.emit("phasemix:mixer", m);
+                                if let Some(tp) = toast {
+                                    let _ = hk_handle.emit("phasemix:toast", tp);
+                                }
                                 sync_tray_ui(&hk_handle, false);
                             }
                         }
@@ -746,7 +809,7 @@ pub fn run() {
                     }
                 })?;
 
-            // Push live 30 Hz meter snapshots over WebView2 IPC + keep tray tooltip live
+            // Push live 30 Hz meter snapshots over WebView2 IPC + tray sync + hot-plug device watcher
             let emit_handle = app.handle().clone();
             let emit_eng = state.engine.clone();
             let emit_stop = state.emitter_stop.clone();
@@ -754,6 +817,8 @@ pub fn run() {
                 .name("meters-emitter".to_string())
                 .spawn(move || {
                     let mut sent_stopped = false;
+                    let mut last_dev_sig = String::new();
+                    let mut last_dev_check = Instant::now();
                     while !emit_stop.load(Ordering::Relaxed) {
                         sync_tray_ui(&emit_handle, false);
                         let visible = emit_handle
@@ -763,6 +828,20 @@ pub fn run() {
                         if !visible {
                             thread::sleep(Duration::from_millis(300));
                             continue;
+                        }
+                        if last_dev_check.elapsed() >= Duration::from_millis(1600) {
+                            last_dev_check = Instant::now();
+                            let sig = current_render_signature();
+                            if !sig.is_empty() {
+                                if last_dev_sig.is_empty() {
+                                    last_dev_sig = sig;
+                                } else if sig != last_dev_sig {
+                                    last_dev_sig = sig;
+                                    let devs = emit_eng.refresh_devices();
+                                    let _ = emit_handle.emit("phasemix:devices", devs);
+                                    sync_tray_ui(&emit_handle, false);
+                                }
+                            }
                         }
                         let is_running = emit_eng.is_running();
                         if is_running || !sent_stopped {
