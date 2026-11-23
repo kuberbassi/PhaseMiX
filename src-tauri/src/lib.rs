@@ -819,8 +819,12 @@ pub fn run() {
                     let mut sent_stopped = false;
                     let mut last_dev_sig = String::new();
                     let mut last_dev_check = Instant::now();
+                    let mut last_tray_sync = Instant::now();
                     while !emit_stop.load(Ordering::Relaxed) {
-                        sync_tray_ui(&emit_handle, false);
+                        if last_tray_sync.elapsed() >= Duration::from_millis(250) {
+                            last_tray_sync = Instant::now();
+                            sync_tray_ui(&emit_handle, false);
+                        }
                         let visible = emit_handle
                             .get_webview_window("main")
                             .and_then(|w| w.is_visible().ok())
@@ -837,7 +841,7 @@ pub fn run() {
                                     last_dev_sig = sig;
                                 } else if sig != last_dev_sig {
                                     last_dev_sig = sig;
-                                    let devs = emit_eng.refresh_devices();
+                                    let devs = emit_eng.refresh_devices_passive();
                                     let _ = emit_handle.emit("phasemix:devices", devs);
                                     sync_tray_ui(&emit_handle, false);
                                 }

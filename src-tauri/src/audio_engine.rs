@@ -30,11 +30,125 @@ use crate::dsp::{
 
 pub const MASTER_RATE: u32 = 48_000;
 const MASTER_RATE_F64: f64 = 48_000.0;
-const RING_SECONDS: usize = 3;
+const RING_SECONDS: usize = 4;
 const RING_FRAMES: usize = MASTER_RATE as usize * RING_SECONDS;
-const BASE_BUFFER_MS: f64 = 90.0;
+const BASE_BUFFER_MS: f64 = 125.0;
 const PUMP_BLOCK_FRAMES: usize = 480; // 10 ms at 48 kHz
 const OUTPUT_ROLES: [&str; 3] = ["intex", "boat", "laptop"];
+
+#[link(name = "winmm")]
+unsafe extern "system" {
+    fn timeBeginPeriod(u_period: u32) -> u32;
+    fn timeEndPeriod(u_period: u32) -> u32;
+}
+
+/// Locks Windows OS timer granularity to 1 ms while active so audio threads never jitter in tray/idle.
+struct WinTimerGuard;
+
+impl WinTimerGuard {
+    fn acquire() -> Self {
+        unsafe {
+            let _ = timeBeginPeriod(1);
+        }
+        Self
+    }
+}
+
+impl Drop for WinTimerGuard {
+    fn drop(&mut self) {
+        unsafe {
+            let _ = timeEndPeriod(1);
+        }
+    }
+}
+
+/// Zero-allocation Copy snapshot of MixerState read by Pro Audio threads without heap alloc or UI contention.
+#[derive(Clone, Copy)]
+struct FastAudioParams {
+    master_vol: f64,
+    master_mute: bool,
+    protection_enabled: bool,
+    protection_max_master: f64,
+    protection_ceiling_db: f64,
+    intex_vol: f64,
+    intex_mute: bool,
+    intex_delay_ms: f64,
+    intex_balance: f64,
+    intex_bass_db: f64,
+    intex_mid_db: f64,
+    intex_treble_db: f64,
+    intex_width: f64,
+    boat_vol: f64,
+    boat_mute: bool,
+    boat_delay_ms: f64,
+    boat_mode: AuxMode,
+    boat_hpf_hz: f64,
+    boat_lpf_hz: f64,
+    boat_bass_db: f64,
+    boat_mid_db: f64,
+    boat_treble_db: f64,
+    boat_invert: bool,
+    laptop_vol: f64,
+    laptop_mute: bool,
+    laptop_delay_ms: f64,
+    laptop_mode: AuxMode,
+    laptop_hpf_hz: f64,
+    laptop_lpf_hz: f64,
+    laptop_bass_db: f64,
+    laptop_mid_db: f64,
+    laptop_treble_db: f64,
+    laptop_invert: bool,
+    solo_role: u8, // 0 = none, 1 = intex, 2 = boat, 3 = laptop
+    test_mode: TestMode,
+}
+
+impl FastAudioParams {
+    fn from_mixer(m: &MixerState) -> Self {
+        let solo_role = match m.solo.as_deref() {
+            Some("intex") => 1,
+            Some("boat") => 2,
+            Some("laptop") => 3,
+            _ => 0,
+        };
+        Self {
+            master_vol: m.master_vol,
+            master_mute: m.master_mute,
+            protection_enabled: m.protection_enabled,
+            protection_max_master: m.protection_max_master,
+            protection_ceiling_db: m.protection_ceiling_db,
+            intex_vol: m.intex_vol,
+            intex_mute: m.intex_mute,
+            intex_delay_ms: m.intex_delay_ms,
+            intex_balance: m.intex_balance,
+            intex_bass_db: m.intex_bass_db,
+            intex_mid_db: m.intex_mid_db,
+            intex_treble_db: m.intex_treble_db,
+            intex_width: m.intex_width,
+            boat_vol: m.boat_vol,
+            boat_mute: m.boat_mute,
+            boat_delay_ms: m.boat_delay_ms,
+            boat_mode: AuxMode::from_str(&m.boat_mode),
+            boat_hpf_hz: m.boat_hpf_hz,
+            boat_lpf_hz: m.boat_lpf_hz,
+            boat_bass_db: m.boat_bass_db,
+            boat_mid_db: m.boat_mid_db,
+            boat_treble_db: m.boat_treble_db,
+            boat_invert: m.boat_invert,
+            laptop_vol: m.laptop_vol,
+            laptop_mute: m.laptop_mute,
+            laptop_delay_ms: m.laptop_delay_ms,
+            laptop_mode: AuxMode::from_str(&m.laptop_mode),
+            laptop_hpf_hz: m.laptop_hpf_hz,
+            laptop_lpf_hz: m.laptop_lpf_hz,
+            laptop_bass_db: m.laptop_bass_db,
+            laptop_mid_db: m.laptop_mid_db,
+            laptop_treble_db: m.laptop_treble_db,
+            laptop_invert: m.laptop_invert,
+            solo_role,
+            test_mode: TestMode::from_str(&m.test_mode),
+        }
+    }
+}
 
 #[inline]
 fn ensure_com() {
@@ -674,7 +788,7 @@ impl SharedRing {
         if rem > 0 {
             self.buf[..rem].copy_from_slice(&src[first..]);
         }
-        self.write_idx = self.write_idx.wrapping_add(frames.len() as u64);
+        self.write_idx = self.write_idx.wrapping_add(src.len() as u64);
     }
 
     fn read_interpolated(&self, read_pos: f64, out: &mut [[f32; 2]], step: f64) {
@@ -692,7 +806,7 @@ impl SharedRing {
                 return;
             }
             let avail = age.min(out_frames as u64) as usize;
-            let s = (idx_start as usize) % RING_FRAMES;
+            let s = (idx_start % RING_FRAMES as u64) as usize;
             let first = avail.min(RING_FRAMES - s);
             out[..first].copy_from_slice(&self.buf[s..s + first]);
             if first < avail {
@@ -704,37 +818,44 @@ impl SharedRing {
             return;
         }
 
+        let ring_u64 = RING_FRAMES as u64;
         let min_pos = w.saturating_sub(max_age) as f64;
         let w_lim = w.saturating_sub(1) as f64;
         let hermite_lim = w.saturating_sub(2) as f64;
         for (i, frame) in out.iter_mut().enumerate() {
             let pos = read_pos + (i as f64) * step;
-            if pos < min_pos || pos >= w_lim {
+            if pos < min_pos || pos >= w_lim || !pos.is_finite() {
                 *frame = [0.0, 0.0];
                 continue;
             }
-            let idx1 = pos.floor() as usize;
+            let idx1 = pos.floor() as u64;
             let t = (pos - idx1 as f64) as f32;
             if pos >= min_pos + 1.0 && pos < hermite_lim && idx1 >= 1 {
-                let s0 = self.buf[(idx1 - 1) % RING_FRAMES];
-                let s1 = self.buf[idx1 % RING_FRAMES];
-                let s2 = self.buf[(idx1 + 1) % RING_FRAMES];
-                let s3 = self.buf[(idx1 + 2) % RING_FRAMES];
+                let s0 = self.buf[((idx1 - 1) % ring_u64) as usize];
+                let s1 = self.buf[(idx1 % ring_u64) as usize];
+                let s2 = self.buf[((idx1 + 1) % ring_u64) as usize];
+                let s3 = self.buf[((idx1 + 2) % ring_u64) as usize];
                 let t2 = t * t;
                 let t3 = t2 * t;
                 let interp = |y0: f32, y1: f32, y2: f32, y3: f32| -> f32 {
-                    0.5 * ((2.0 * y1)
-                        + (-y0 + y2) * t
-                        + (2.0 * y0 - 5.0 * y1 + 4.0 * y2 - y3) * t2
-                        + (-y0 + 3.0 * y1 - 3.0 * y2 + y3) * t3)
+                    let v = 0.5
+                        * ((2.0 * y1)
+                            + (-y0 + y2) * t
+                            + (2.0 * y0 - 5.0 * y1 + 4.0 * y2 - y3) * t2
+                            + (-y0 + 3.0 * y1 - 3.0 * y2 + y3) * t3);
+                    if v.is_finite() {
+                        v.clamp(-4.0, 4.0)
+                    } else {
+                        0.0
+                    }
                 };
                 *frame = [
                     interp(s0[0], s1[0], s2[0], s3[0]),
                     interp(s0[1], s1[1], s2[1], s3[1]),
                 ];
             } else {
-                let s1 = self.buf[idx1 % RING_FRAMES];
-                let s2 = self.buf[(idx1 + 1) % RING_FRAMES];
+                let s1 = self.buf[(idx1 % ring_u64) as usize];
+                let s2 = self.buf[((idx1 + 1) % ring_u64) as usize];
                 *frame = [s1[0] + (s2[0] - s1[0]) * t, s1[1] + (s2[1] - s1[1]) * t];
             }
         }
@@ -1129,6 +1250,7 @@ pub struct CalibrationResult {
 struct EngineInner {
     config_path: PathBuf,
     mixer: RwLock<MixerState>,
+    fast_params: RwLock<FastAudioParams>,
     prev_day_preset: RwLock<String>,
     selected_ids: RwLock<SelectedIds>,
     selected_names: RwLock<SelectedNames>,
@@ -1140,6 +1262,7 @@ struct EngineInner {
     running: AtomicBool,
     stop_flag: Arc<AtomicBool>,
     workers: Mutex<Vec<JoinHandle<()>>>,
+    timer_guard: Mutex<Option<WinTimerGuard>>,
     save_signal: (Mutex<Option<Instant>>, Condvar),
 }
 
@@ -1156,9 +1279,12 @@ impl AudioRouterEngine {
             }
         }
 
+        let default_m = MixerState::default();
+        let default_fast = FastAudioParams::from_mixer(&default_m);
         let inner = Arc::new(EngineInner {
             config_path,
-            mixer: RwLock::new(MixerState::default()),
+            mixer: RwLock::new(default_m),
+            fast_params: RwLock::new(default_fast),
             prev_day_preset: RwLock::new("desk_triangle".to_string()),
             selected_ids: RwLock::new(SelectedIds::default()),
             selected_names: RwLock::new(SelectedNames::default()),
@@ -1170,6 +1296,7 @@ impl AudioRouterEngine {
             running: AtomicBool::new(false),
             stop_flag: Arc::new(AtomicBool::new(false)),
             workers: Mutex::new(Vec::new()),
+            timer_guard: Mutex::new(None),
             save_signal: (Mutex::new(None), Condvar::new()),
         });
 
@@ -1241,6 +1368,7 @@ impl AudioRouterEngine {
         if m.position_preset != "night_safe" && m.position_preset != "custom" {
             *inner.prev_day_preset.write() = m.position_preset.clone();
         }
+        *inner.fast_params.write() = FastAudioParams::from_mixer(&m);
         *inner.mixer.write() = m;
         *inner.selected_names.write() = parsed.devices.clone();
         *inner.preferred_names.write() = parsed.devices;
@@ -1345,6 +1473,10 @@ impl AudioRouterEngine {
         Self::refresh_device_selection_inner(&self.inner, true)
     }
 
+    pub fn refresh_devices_passive(&self) -> DevicesResponse {
+        Self::refresh_device_selection_inner(&self.inner, false)
+    }
+
     pub fn set_devices(&self, ids: SelectedIds) -> StatusPayload {
         let (inputs, outputs, _) = list_wasapi_devices();
         let id_to_in: HashMap<&str, &str> =
@@ -1376,6 +1508,7 @@ impl AudioRouterEngine {
             if m.position_preset != "night_safe" && m.position_preset != "custom" {
                 *self.inner.prev_day_preset.write() = m.position_preset.clone();
             }
+            *self.inner.fast_params.write() = FastAudioParams::from_mixer(&m);
             m.clone()
         };
         Self::schedule_save(&self.inner);
@@ -1390,6 +1523,7 @@ impl AudioRouterEngine {
             if id != "night_safe" && id != "custom" {
                 *self.inner.prev_day_preset.write() = id.to_string();
             }
+            *self.inner.fast_params.write() = FastAudioParams::from_mixer(&m);
             m.clone()
         };
         Self::save_config_now(&self.inner);
@@ -1449,6 +1583,7 @@ impl AudioRouterEngine {
         if m.position_preset != "night_safe" && m.position_preset != "custom" {
             *self.inner.prev_day_preset.write() = m.position_preset.clone();
         }
+        *self.inner.fast_params.write() = FastAudioParams::from_mixer(&m);
         *self.inner.mixer.write() = m;
         if !parsed.devices.input_name.is_empty()
             || !parsed.devices.intex_name.is_empty()
@@ -1465,7 +1600,9 @@ impl AudioRouterEngine {
 
     pub fn reset_factory(&self) -> StatusPayload {
         *self.inner.prev_day_preset.write() = "desk_triangle".to_string();
-        *self.inner.mixer.write() = MixerState::default();
+        let def = MixerState::default();
+        *self.inner.fast_params.write() = FastAudioParams::from_mixer(&def);
+        *self.inner.mixer.write() = def;
         Self::save_config_now(&self.inner);
         self.status_payload()
     }
@@ -1697,6 +1834,7 @@ impl AudioRouterEngine {
             m.intex_delay_ms = measured_ms;
             m.laptop_delay_ms = measured_ms;
             m.calibrated_delay_ms = Some(measured_ms);
+            *self.inner.fast_params.write() = FastAudioParams::from_mixer(&m);
         }
         Self::save_config_now(&self.inner);
 
@@ -1738,7 +1876,7 @@ impl AudioRouterEngine {
     }
 
     pub fn fast_meters_event(&self) -> FastMetersEvent {
-        let m = self.inner.mixer.read();
+        let m = *self.inner.fast_params.read();
         FastMetersEvent {
             running: self.inner.running.load(Ordering::SeqCst),
             meters: self.inner.meters.read().clone(),
@@ -1793,6 +1931,7 @@ impl AudioRouterEngine {
         if inner.running.swap(true, Ordering::SeqCst) {
             return;
         }
+        *inner.timer_guard.lock() = Some(WinTimerGuard::acquire());
         inner.stop_flag.store(false, Ordering::SeqCst);
         inner.ring.lock().reset_preseed();
 
@@ -1852,6 +1991,7 @@ impl AudioRouterEngine {
         for h in handles {
             let _ = h.join();
         }
+        *inner.timer_guard.lock() = None;
         *inner.meters.write() = Meters::default();
         {
             let mut t = inner.telemetry.write();
@@ -1880,8 +2020,12 @@ fn set_output_status(inner: &EngineInner, role: &str, status: String) {
     }
 }
 
+#[inline]
 fn set_output_meter(inner: &EngineInner, role: &str, db: f64) {
-    let mut m = inner.meters.write();
+    // Non-blocking try_write ensures Pro Audio render callbacks never stall behind UI reads
+    let Some(mut m) = inner.meters.try_write() else {
+        return;
+    };
     match role {
         "intex" => m.intex_db = db,
         "boat" => m.boat_db = db,
@@ -1890,8 +2034,11 @@ fn set_output_meter(inner: &EngineInner, role: &str, db: f64) {
     }
 }
 
+#[inline]
 fn set_output_telemetry(inner: &EngineInner, role: &str, actual_ms: f64, ppm: f64, gr_db: f64) {
-    let mut t = inner.telemetry.write();
+    let Some(mut t) = inner.telemetry.try_write() else {
+        return;
+    };
     match role {
         "intex" => {
             t.intex_actual_ms = actual_ms;
@@ -1932,7 +2079,12 @@ fn decode_bytes_to_stereo_48k(
             let off = c_idx.min(ch - 1) * bps;
             match (sample_type, bps) {
                 (SampleType::Float, 4) => {
-                    f32::from_le_bytes(frame[off..off + 4].try_into().unwrap_or([0; 4]))
+                    let v = f32::from_le_bytes(frame[off..off + 4].try_into().unwrap_or([0; 4]));
+                    if v.is_finite() {
+                        v.clamp(-2.0, 2.0)
+                    } else {
+                        0.0
+                    }
                 }
                 (SampleType::Int, 2) => {
                     let s = i16::from_le_bytes(frame[off..off + 2].try_into().unwrap_or([0; 2]));
@@ -2019,10 +2171,16 @@ fn run_capture_pump(inner: Arc<EngineInner>, device_id: String) {
     let mut test_buf = [[0.0_f32; 2]; PUMP_BLOCK_FRAMES];
     let mut raw_bytes: Vec<u8> = Vec::with_capacity(48000);
     let mut scratch_stereo: Vec<[f32; 2]> = Vec::with_capacity(2048);
-    let mut out_48k: Vec<[f32; 2]> = Vec::with_capacity(2048);
+    let mut out_48k: Vec<[f32; 2]> = Vec::with_capacity(4096);
+
+    let set_in_meter = |db: f64| {
+        if let Some(mut m) = inner.meters.try_write() {
+            m.in_db = db;
+        }
+    };
 
     while !inner.stop_flag.load(Ordering::Relaxed) {
-        let mode_now = TestMode::from_str(&inner.mixer.read().test_mode);
+        let mode_now = inner.fast_params.read().test_mode;
         let cal_now = inner.cal.active.load(Ordering::Relaxed);
         if device_id.is_empty() || mode_now != TestMode::Off || cal_now {
             inner.telemetry.write().input_status = if cal_now {
@@ -2035,7 +2193,7 @@ fn run_capture_pump(inner: Arc<EngineInner>, device_id: String) {
             let mut next_tick = Instant::now();
             let dt = Duration::from_micros(10_000);
             while !inner.stop_flag.load(Ordering::Relaxed) {
-                let m = TestMode::from_str(&inner.mixer.read().test_mode);
+                let m = inner.fast_params.read().test_mode;
                 let cal_active = inner.cal.active.load(Ordering::Relaxed);
                 if !cal_active && m == TestMode::Off && !device_id.is_empty() {
                     break;
@@ -2062,14 +2220,14 @@ fn run_capture_pump(inner: Arc<EngineInner>, device_id: String) {
                     }
                     ring.write(&test_buf);
                     drop(ring);
-                    inner.meters.write().in_db = block_db(&test_buf);
+                    set_in_meter(block_db(&test_buf));
                 } else if m == TestMode::Off {
                     inner.ring.lock().write(&silence);
-                    inner.meters.write().in_db = -60.0;
+                    set_in_meter(-60.0);
                 } else {
                     sig_gen.generate(m, &mut test_buf);
                     inner.ring.lock().write(&test_buf);
-                    inner.meters.write().in_db = block_db(&test_buf);
+                    set_in_meter(block_db(&test_buf));
                 }
                 next_tick += dt;
                 let now = Instant::now();
@@ -2094,13 +2252,13 @@ fn run_capture_pump(inner: Arc<EngineInner>, device_id: String) {
                     Ok(c) => c,
                     Err(e) => {
                         inner.telemetry.write().input_status = format!("Input Error ({e})");
-                        thread::sleep(Duration::from_millis(500));
+                        thread::sleep(Duration::from_millis(400));
                         continue;
                     }
                 };
                 if let Err(e) = client.start_stream() {
                     inner.telemetry.write().input_status = format!("Input Error ({e})");
-                    thread::sleep(Duration::from_millis(500));
+                    thread::sleep(Duration::from_millis(400));
                     continue;
                 }
 
@@ -2112,7 +2270,7 @@ fn run_capture_pump(inner: Arc<EngineInner>, device_id: String) {
                 let mut silence_pace = Instant::now();
 
                 'capture_stream: while !inner.stop_flag.load(Ordering::Relaxed) {
-                    if TestMode::from_str(&inner.mixer.read().test_mode) != TestMode::Off
+                    if inner.fast_params.read().test_mode != TestMode::Off
                         || inner.cal.active.load(Ordering::Relaxed)
                     {
                         break;
@@ -2152,12 +2310,11 @@ fn run_capture_pump(inner: Arc<EngineInner>, device_id: String) {
                                 got_frames = true;
                                 last_audio_ts = Instant::now();
                                 if info.flags.silent {
-                                    let count = (read_n as usize)
-                                        .min(PUMP_BLOCK_FRAMES * 4);
+                                    let count = (read_n as usize).min(RING_FRAMES / 2);
                                     out_48k.clear();
                                     out_48k.resize(count, [0.0, 0.0]);
                                     inner.ring.lock().write(&out_48k);
-                                    inner.meters.write().in_db = -60.0;
+                                    set_in_meter(-60.0);
                                 } else {
                                     let bytes_read = (read_n as usize) * frame_bytes;
                                     decode_bytes_to_stereo_48k(
@@ -2167,8 +2324,17 @@ fn run_capture_pump(inner: Arc<EngineInner>, device_id: String) {
                                         &mut out_48k,
                                     );
                                     if !out_48k.is_empty() {
+                                        if info.flags.data_discontinuity {
+                                            let fade_n = out_48k.len().min(64);
+                                            for (idx, fr) in out_48k[..fade_n].iter_mut().enumerate() {
+                                                let t = (idx + 1) as f32 / (fade_n as f32);
+                                                let g = 0.5 - 0.5 * (std::f32::consts::PI * t).cos();
+                                                fr[0] *= g;
+                                                fr[1] *= g;
+                                            }
+                                        }
                                         inner.ring.lock().write(&out_48k);
-                                        inner.meters.write().in_db = block_db(&out_48k);
+                                        set_in_meter(block_db(&out_48k));
                                     }
                                 }
                             }
@@ -2195,23 +2361,39 @@ fn run_capture_pump(inner: Arc<EngineInner>, device_id: String) {
                             wrote += 1;
                         }
                         if wrote > 0 {
-                            inner.meters.write().in_db = -60.0;
+                            set_in_meter(-60.0);
                         }
                     } else if got_frames {
                         silence_pace = Instant::now();
                     }
                 }
                 let _ = client.stop_stream();
-                if !inner.stop_flag.load(Ordering::Relaxed)
-                    && TestMode::from_str(&inner.mixer.read().test_mode) == TestMode::Off
-                    && !inner.cal.active.load(Ordering::Relaxed)
-                {
-                    thread::sleep(Duration::from_millis(250));
+                // Keep output ring padded with silence during input reconnect backoff
+                for _ in 0..25 {
+                    if inner.stop_flag.load(Ordering::Relaxed)
+                        || inner.fast_params.read().test_mode != TestMode::Off
+                        || inner.cal.active.load(Ordering::Relaxed)
+                    {
+                        break;
+                    }
+                    inner.ring.lock().write(&silence);
+                    set_in_meter(-60.0);
+                    thread::sleep(Duration::from_millis(10));
                 }
             }
             Err(err) => {
                 inner.telemetry.write().input_status = format!("Input Error ({err})");
-                thread::sleep(Duration::from_millis(600));
+                for _ in 0..40 {
+                    if inner.stop_flag.load(Ordering::Relaxed)
+                        || inner.fast_params.read().test_mode != TestMode::Off
+                        || inner.cal.active.load(Ordering::Relaxed)
+                    {
+                        break;
+                    }
+                    inner.ring.lock().write(&silence);
+                    set_in_meter(-60.0);
+                    thread::sleep(Duration::from_millis(10));
+                }
             }
         }
     }
@@ -2285,8 +2467,18 @@ fn frames_to_le_bytes(frames: &[[f32; 2]], byte_buf: &mut Vec<u8>) {
     byte_buf.clear();
     byte_buf.reserve(frames.len() * 8);
     for f in frames {
-        byte_buf.extend_from_slice(&f[0].to_le_bytes());
-        byte_buf.extend_from_slice(&f[1].to_le_bytes());
+        let l = if f[0].is_finite() {
+            f[0].clamp(-0.9999, 0.9999)
+        } else {
+            0.0
+        };
+        let r = if f[1].is_finite() {
+            f[1].clamp(-0.9999, 0.9999)
+        } else {
+            0.0
+        };
+        byte_buf.extend_from_slice(&l.to_le_bytes());
+        byte_buf.extend_from_slice(&r.to_le_bytes());
     }
 }
 
@@ -2294,8 +2486,14 @@ fn run_output_loop(inner: Arc<EngineInner>, role: String, initial_id: String) {
     ensure_com();
     let _prio_guard = elevate_audio_thread();
     let mut dev_id = initial_id;
-    let mut block_buf: Vec<[f32; 2]> = vec![[0.0; 2]; 2048];
-    let mut byte_buf: Vec<u8> = Vec::with_capacity(2048 * 8);
+    let role_idx: u8 = match role.as_str() {
+        "intex" => 1,
+        "boat" => 2,
+        _ => 3,
+    };
+    let mut block_buf: Vec<[f32; 2]> = Vec::with_capacity(9600);
+    block_buf.resize(2048, [0.0, 0.0]);
+    let mut byte_buf: Vec<u8> = Vec::with_capacity(9600 * 8);
 
     while !inner.stop_flag.load(Ordering::Relaxed) {
         let opened = if dev_id.is_empty() {
@@ -2338,13 +2536,15 @@ fn run_output_loop(inner: Arc<EngineInner>, role: String, initial_id: String) {
 
                 let mut primary_dsp = PrimaryProcessor::new(out_rate as f64);
                 let mut aux_dsp = AuxChannelProcessor::new(out_rate as f64);
+                primary_dsp.reset();
+                aux_dsp.reset();
 
                 let init_delay = {
-                    let m = inner.mixer.read();
-                    match role.as_str() {
-                        "intex" => m.intex_delay_ms,
-                        "boat" => m.boat_delay_ms,
-                        _ => m.laptop_delay_ms,
+                    let p = *inner.fast_params.read();
+                    match role_idx {
+                        1 => p.intex_delay_ms,
+                        2 => p.boat_delay_ms,
+                        _ => p.laptop_delay_ms,
                     }
                 };
                 let mut prev_delay_ms = init_delay;
@@ -2353,7 +2553,8 @@ fn run_output_loop(inner: Arc<EngineInner>, role: String, initial_id: String) {
                     - (BASE_BUFFER_MS + init_delay) * MASTER_RATE_F64 / 1000.0)
                     .max(0.0);
                 let mut smoothed_diff = 0.0_f64;
-                let mut fade_in = 1.0_f32;
+                let mut do_resync_fade = true;
+                let mut last_out = [0.0_f32; 2];
 
                 while !inner.stop_flag.load(Ordering::Relaxed) {
                     if h_event.wait_for_event(500).is_err() {
@@ -2368,14 +2569,14 @@ fn run_output_loop(inner: Arc<EngineInner>, role: String, initial_id: String) {
                         Err(_) => break,
                     };
 
-                    let params = inner.mixer.read().clone();
+                    let params = *inner.fast_params.read();
                     let cal_now = inner.cal.active.load(Ordering::Relaxed);
                     let delay_ms = if cal_now {
                         0.0
                     } else {
-                        match role.as_str() {
-                            "intex" => params.intex_delay_ms,
-                            "boat" => params.boat_delay_ms,
+                        match role_idx {
+                            1 => params.intex_delay_ms,
+                            2 => params.boat_delay_ms,
                             _ => params.laptop_delay_ms,
                         }
                     };
@@ -2392,14 +2593,14 @@ fn run_output_loop(inner: Arc<EngineInner>, role: String, initial_id: String) {
                         let desired_pos = (w as f64 - target_lag).max(min_valid);
                         let mut diff = desired_pos - read_pos;
 
-                        // Snap cleanly with micro-fade on delay changes, >140 ms lag shifts, underruns, or ring wrap
+                        // Keep gentle jitter smoothing; snap only on user delay changes, genuine underrun/wrap, or >220 ms shift
                         let step_est = MASTER_RATE_F64 / (out_rate as f64);
-                        let block_need = (avail as f64) * step_est + 64.0;
+                        let block_need = (avail as f64) * step_est + 32.0;
                         let underrun = read_pos + block_need >= w as f64;
                         let overflow = read_pos < min_valid;
 
                         if (delay_ms - prev_delay_ms).abs() > 0.5
-                            || diff.abs() > MASTER_RATE_F64 * 0.14
+                            || diff.abs() > MASTER_RATE_F64 * 0.22
                             || underrun
                             || overflow
                         {
@@ -2407,12 +2608,12 @@ fn run_output_loop(inner: Arc<EngineInner>, role: String, initial_id: String) {
                             if diff.abs() > 240.0 || underrun || overflow {
                                 read_pos = desired_pos.min(w as f64 - block_need).max(min_valid);
                                 smoothed_diff = 0.0;
-                                fade_in = 0.0;
+                                do_resync_fade = true;
                                 diff = 0.0;
                             }
                         }
 
-                        // 6 ms jitter deadband + ±1200 ppm smooth clock drift tracking (zero audible warble/tearing)
+                        // 6 ms jitter deadband + ±1200 ppm smooth clock drift tracking
                         smoothed_diff = 0.995 * smoothed_diff + 0.005 * diff;
                         let rate_adj = if smoothed_diff.abs() < 288.0 {
                             1.0
@@ -2428,29 +2629,18 @@ fn run_output_loop(inner: Arc<EngineInner>, role: String, initial_id: String) {
 
                     let (w_after, rate_adj, read_start, step) = w_now;
 
-                    if fade_in < 1.0 {
-                        let next_fade = (fade_in + 0.25).min(1.0);
-                        let span = avail.max(1) as f32;
-                        for (idx, frame) in block_buf.iter_mut().enumerate() {
-                            let g = fade_in + (next_fade - fade_in) * (idx as f32 / span);
-                            frame[0] *= g;
-                            frame[1] *= g;
-                        }
-                        fade_in = next_fade;
-                    }
-
                     let master_vol = if params.protection_enabled {
                         params.master_vol.min(params.protection_max_master)
                     } else {
                         params.master_vol
                     };
-                    let solo_blocked = params.solo.as_deref().is_some_and(|s| s != role);
+                    let solo_blocked = params.solo_role != 0 && params.solo_role != role_idx;
 
                     let gr_db = if cal_now {
-                        if role == "laptop" {
+                        if role_idx == 3 {
                             block_buf.fill([0.0, 0.0]);
                         } else {
-                            let wins = if role == "boat" {
+                            let wins = if role_idx == 2 {
                                 [
                                     (inner.cal.s0.load(Ordering::Relaxed), &inner.cal.bt1_lag),
                                     (inner.cal.s2.load(Ordering::Relaxed), &inner.cal.bt2_lag),
@@ -2494,7 +2684,7 @@ fn run_output_loop(inner: Arc<EngineInner>, role: String, initial_id: String) {
                             }
                         }
                         0.0
-                    } else if role == "intex" {
+                    } else if role_idx == 1 {
                         let p = PrimaryParams {
                             master_vol,
                             vol: params.intex_vol,
@@ -2509,11 +2699,11 @@ fn run_output_loop(inner: Arc<EngineInner>, role: String, initial_id: String) {
                         };
                         primary_dsp.process_in_place(&mut block_buf, &p);
                         primary_dsp.guard.last_gr_db
-                    } else if role == "boat" {
+                    } else if role_idx == 2 {
                         let p = AuxParams {
                             master_vol,
                             vol: params.boat_vol,
-                            mode: AuxMode::from_str(&params.boat_mode),
+                            mode: params.boat_mode,
                             hpf_hz: params.boat_hpf_hz,
                             lpf_hz: params.boat_lpf_hz,
                             bass_db: params.boat_bass_db,
@@ -2530,7 +2720,7 @@ fn run_output_loop(inner: Arc<EngineInner>, role: String, initial_id: String) {
                         let p = AuxParams {
                             master_vol,
                             vol: params.laptop_vol,
-                            mode: AuxMode::from_str(&params.laptop_mode),
+                            mode: params.laptop_mode,
                             hpf_hz: params.laptop_hpf_hz,
                             lpf_hz: params.laptop_lpf_hz,
                             bass_db: params.laptop_bass_db,
@@ -2544,6 +2734,22 @@ fn run_output_loop(inner: Arc<EngineInner>, role: String, initial_id: String) {
                         aux_dsp.process_in_place(&mut block_buf, &p);
                         aux_dsp.guard.last_gr_db
                     };
+
+                    if do_resync_fade && !block_buf.is_empty() {
+                        // Click-free 2 ms raised-cosine crossfade from previous block tail into resynced audio
+                        let x_len = avail.min(96);
+                        let inv_x = 1.0 / (x_len as f32);
+                        for (idx, frame) in block_buf[..x_len].iter_mut().enumerate() {
+                            let t = (idx + 1) as f32 * inv_x;
+                            let g = 0.5 - 0.5 * (std::f32::consts::PI * t).cos();
+                            frame[0] = last_out[0] * (1.0 - g) + frame[0] * g;
+                            frame[1] = last_out[1] * (1.0 - g) + frame[1] * g;
+                        }
+                        do_resync_fade = false;
+                    }
+                    if let Some(&tail) = block_buf.last() {
+                        last_out = tail;
+                    }
 
                     frames_to_le_bytes(&block_buf, &mut byte_buf);
                     if render_client.write_to_device(&byte_buf, None).is_err() {
@@ -2621,6 +2827,26 @@ fn run_output_loop(inner: Arc<EngineInner>, role: String, initial_id: String) {
     }
 }
 
+fn apply_win_key_delta(m: &mut MixerState, scalar: f32, unity_scalar: f32) -> bool {
+    let diff = (scalar - unity_scalar) as f64;
+    if diff.abs() < 0.012 {
+        return false;
+    }
+    let steps = (diff / 0.02).round();
+    let delta = if steps.abs() <= 3.0 {
+        steps * 4.0
+    } else {
+        diff * 120.0
+    };
+    let cap = if m.protection_enabled {
+        m.protection_max_master
+    } else {
+        200.0
+    };
+    m.master_vol = (m.master_vol + delta).clamp(0.0, cap).round();
+    true
+}
+
 fn run_win_key_bridge(inner: Arc<EngineInner>, input_id: String) {
     if input_id.is_empty() {
         return;
@@ -2635,21 +2861,25 @@ fn run_win_key_bridge(inner: Arc<EngineInner>, input_id: String) {
     ensure_com();
     const UNITY_SCALAR: f32 = 0.98;
 
-    let Ok(enumerator) = DeviceEnumerator::new() else {
-        return;
-    };
-    let Ok(dev) = enumerator.get_device(&input_id) else {
-        return;
-    };
-    let Ok(ep) = (unsafe { dev.as_immdevice().Activate::<IAudioEndpointVolume>(CLSCTX_ALL, None) })
-    else {
-        return;
+    let activate_ep = || -> Option<IAudioEndpointVolume> {
+        let enumerator = DeviceEnumerator::new().ok()?;
+        let dev = enumerator.get_device(&input_id).ok()?;
+        let ep: IAudioEndpointVolume = unsafe {
+            dev.as_immdevice()
+                .Activate::<IAudioEndpointVolume>(CLSCTX_ALL, None)
+                .ok()?
+        };
+        unsafe {
+            let _ = ep.SetMute(false, std::ptr::null());
+            let _ = ep.SetMasterVolumeLevelScalar(UNITY_SCALAR, std::ptr::null());
+        }
+        Some(ep)
     };
 
-    unsafe {
-        let _ = ep.SetMute(false, std::ptr::null());
-        let _ = ep.SetMasterVolumeLevelScalar(UNITY_SCALAR, std::ptr::null());
-    }
+    let Some(mut ep) = activate_ep() else {
+        return;
+    };
+    let mut com_err_streak: u32 = 0;
 
     while !inner.stop_flag.load(Ordering::Relaxed) {
         thread::sleep(Duration::from_millis(60));
@@ -2661,33 +2891,42 @@ fn run_win_key_bridge(inner: Arc<EngineInner>, input_id: String) {
             {
                 let mut m = inner.mixer.write();
                 m.master_mute = !m.master_mute;
+                *inner.fast_params.write() = FastAudioParams::from_mixer(&m);
             }
             AudioRouterEngine::save_config_now(&inner);
             unsafe {
                 let _ = ep.SetMute(false, std::ptr::null());
             }
         }
-        if let Ok(scalar) = unsafe { ep.GetMasterVolumeLevelScalar() } {
-            let diff = (scalar - UNITY_SCALAR) as f64;
-            if diff.abs() >= 0.012 {
-                let steps = (diff / 0.02).round();
-                let delta = if steps.abs() <= 3.0 {
-                    steps * 4.0
-                } else {
-                    diff * 120.0
-                };
-                {
+        match unsafe { ep.GetMasterVolumeLevelScalar() } {
+            Ok(scalar) => {
+                com_err_streak = 0;
+                let changed = {
                     let mut m = inner.mixer.write();
-                    let cap = if m.protection_enabled {
-                        m.protection_max_master
-                    } else {
-                        200.0
-                    };
-                    m.master_vol = (m.master_vol + delta).clamp(0.0, cap).round();
+                    let ok = apply_win_key_delta(&mut m, scalar, UNITY_SCALAR);
+                    if ok {
+                        *inner.fast_params.write() = FastAudioParams::from_mixer(&m);
+                    }
+                    ok
+                };
+                if changed {
+                    AudioRouterEngine::schedule_save(&inner);
+                    unsafe {
+                        let _ = ep.SetMasterVolumeLevelScalar(UNITY_SCALAR, std::ptr::null());
+                    }
                 }
-                AudioRouterEngine::schedule_save(&inner);
-                unsafe {
-                    let _ = ep.SetMasterVolumeLevelScalar(UNITY_SCALAR, std::ptr::null());
+            }
+            Err(_) => {
+                com_err_streak = com_err_streak.saturating_add(1);
+                if com_err_streak >= 5 {
+                    com_err_streak = 0;
+                    thread::sleep(Duration::from_millis(400));
+                    if inner.stop_flag.load(Ordering::Relaxed) {
+                        break;
+                    }
+                    if let Some(new_ep) = activate_ep() {
+                        ep = new_ep;
+                    }
                 }
             }
         }
@@ -2959,5 +3198,45 @@ mod tests {
             assert_eq!(m.laptop_delay_ms, 236.0, "preset {id} overwrote laptop_delay");
             assert_eq!(m.calibrated_delay_ms, Some(236.0));
         }
+    }
+
+    #[test]
+    fn win_key_delta_and_fast_params_sync_consistently() {
+        let mut m = MixerState::default();
+        assert!(!apply_win_key_delta(&mut m, 0.985, 0.98));
+        assert_eq!(m.master_vol, 25.0);
+
+        assert!(apply_win_key_delta(&mut m, 1.00, 0.98));
+        assert_eq!(m.master_vol, 29.0);
+
+        assert!(apply_win_key_delta(&mut m, 1.98, 0.98));
+        assert_eq!(m.master_vol, 60.0);
+
+        m.protection_enabled = false;
+        assert!(apply_win_key_delta(&mut m, 1.98, 0.98));
+        assert_eq!(m.master_vol, 180.0);
+        let _fp = FastAudioParams::from_mixer(&m);
+
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let cfg = std::env::temp_dir().join(format!("phasemix_fastparams_{stamp}.json"));
+        let eng = AudioRouterEngine::new(cfg.clone());
+        let st = eng.update_mixer(MixerPatch {
+            master_vol: Some(38.0),
+            master_mute: Some(true),
+            solo: Some(Some("boat".to_string())),
+            ..Default::default()
+        });
+        assert_eq!(st.master_vol, 38.0);
+        assert!(st.master_mute);
+        assert_eq!(st.solo.as_deref(), Some("boat"));
+
+        let preset = eng.apply_preset("wide_room").unwrap();
+        assert_eq!(preset.position_preset, "wide_room");
+
+        let _ = fs::remove_file(&cfg);
+        let _ = fs::remove_file(AudioRouterEngine::backup_path(&cfg));
     }
 }

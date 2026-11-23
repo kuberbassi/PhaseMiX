@@ -149,6 +149,11 @@ impl Default for StereoBiquad {
 }
 
 impl StereoBiquad {
+    fn reset_state(&mut self) {
+        self.z1 = [0.0; 2];
+        self.z2 = [0.0; 2];
+    }
+
     fn configure(&mut self, key: i32, active: bool, build: impl FnOnce() -> BiquadCoeffs) {
         if key == self.last_key {
             return;
@@ -159,8 +164,7 @@ impl StereoBiquad {
             self.coeffs = build();
         } else {
             self.coeffs = BiquadCoeffs::bypass();
-            self.z1 = [0.0; 2];
-            self.z2 = [0.0; 2];
+            self.reset_state();
         }
     }
 
@@ -172,11 +176,30 @@ impl StereoBiquad {
         let c = self.coeffs;
         for frame in block.iter_mut() {
             for ch in 0..2 {
-                let x = frame[ch] as f64;
+                let x = if frame[ch].is_finite() {
+                    (frame[ch] as f64).clamp(-8.0, 8.0)
+                } else {
+                    0.0
+                };
                 let y = c.b0 * x + self.z1[ch];
+                if !y.is_finite() {
+                    self.z1[ch] = 0.0;
+                    self.z2[ch] = 0.0;
+                    frame[ch] = 0.0;
+                    continue;
+                }
                 self.z1[ch] = c.b1 * x - c.a1 * y + self.z2[ch];
                 self.z2[ch] = c.b2 * x - c.a2 * y;
                 frame[ch] = y as f32;
+            }
+        }
+        // Flush subnormals & guard state against NaN/Inf lockups over long silent/idle periods
+        for ch in 0..2 {
+            if !self.z1[ch].is_finite() || self.z1[ch].abs() < 1e-18 {
+                self.z1[ch] = 0.0;
+            }
+            if !self.z2[ch].is_finite() || self.z2[ch].abs() < 1e-18 {
+                self.z2[ch] = 0.0;
             }
         }
     }
@@ -198,6 +221,12 @@ impl ThreeBandEq {
             mid: StereoBiquad::default(),
             treble: StereoBiquad::default(),
         }
+    }
+
+    pub fn reset(&mut self) {
+        self.bass.reset_state();
+        self.mid.reset_state();
+        self.treble.reset_state();
     }
 
     pub fn process_in_place(&mut self, block: &mut [[f32; 2]], bass_db: f64, mid_db: f64, treble_db: f64) {
@@ -234,33 +263,50 @@ fn sanitize_sample(v: f32) -> f32 {
     }
 }
 
+/// Strictly C1-continuous soft saturation above 0.90 (never jumps downward or harsh-clips).
 #[inline]
 fn soft_limit_sample(v: f32) -> f32 {
-    if v.abs() <= 0.96 {
+    const THRESH: f32 = 0.90;
+    const HEADROOM: f32 = 0.095;
+    let a = v.abs();
+    if a <= THRESH {
         v
     } else {
-        (v * 0.95).tanh()
+        v.signum() * (THRESH + HEADROOM * ((a - THRESH) / HEADROOM).tanh())
     }
 }
 
-/// Smooth ear-safe output peak limiter with C1 soft-knee first-block transient catch.
+/// Smooth ear-safe output peak limiter with sample-rate-scaled release & sub-ms transient catch.
 #[derive(Clone, Debug)]
 pub struct PeakGuard {
+    fs: f64,
     env: f64,
     pub last_gr_db: f64,
 }
 
 impl PeakGuard {
     pub fn new() -> Self {
+        Self::with_rate(48_000.0)
+    }
+
+    pub fn with_rate(fs: f64) -> Self {
         Self {
+            fs: fs.max(8_000.0),
             env: 1.0,
             last_gr_db: 0.0,
         }
     }
 
+    pub fn reset(&mut self) {
+        self.env = 1.0;
+        self.last_gr_db = 0.0;
+    }
+
     pub fn process_in_place(&mut self, block: &mut [[f32; 2]], enabled: bool, ceiling_db: f64) {
         if !enabled || block.is_empty() {
-            self.env = (self.env + 0.25).min(1.0);
+            let dt = block.len() as f64 / self.fs;
+            let rel = 1.0 - (-dt / 0.10).exp();
+            self.env += (1.0 - self.env) * rel.max(0.05);
             self.last_gr_db = 0.0;
             for frame in block.iter_mut() {
                 frame[0] = soft_limit_sample(sanitize_sample(frame[0]));
@@ -278,15 +324,27 @@ impl PeakGuard {
         }
 
         let target_gain = if peak > ceiling_lin {
-            (ceiling_lin / peak).min(1.0)
+            (ceiling_lin / peak).clamp(0.01, 1.0)
         } else {
             1.0
         };
-        let alpha = if target_gain < self.env { 0.9 } else { 0.14 };
-        let next_env = (1.0 - alpha) * self.env + alpha * target_gain;
+        let dt = (block.len() as f64 / self.fs).max(0.001);
+        let alpha = if target_gain < self.env {
+            0.94
+        } else {
+            // Smooth 160 ms release constant independent of 5-45 ms WASAPI packet size
+            1.0 - (-dt / 0.16).exp()
+        };
+        let next_env = ((1.0 - alpha) * self.env + alpha * target_gain).clamp(0.01, 1.0);
         let block_len = block.len();
-        let inv_span = if block_len > 1 {
-            1.0 / ((block_len - 1) as f64)
+        // Engage transient gain reduction rapidly (~0.5 ms ramp) instead of trailing the entire block
+        let ramp_len = if next_env < self.env {
+            block_len.min(24).max(1)
+        } else {
+            block_len.max(1)
+        };
+        let inv_span = if ramp_len > 1 {
+            1.0 / ((ramp_len - 1) as f64)
         } else {
             1.0
         };
@@ -304,7 +362,7 @@ impl PeakGuard {
         let ceil_f32 = ceiling_lin as f32;
 
         for (idx, frame) in block.iter_mut().enumerate() {
-            let t = if block_len > 1 {
+            let t = if ramp_len > 1 && idx < ramp_len {
                 (idx as f64) * inv_span
             } else {
                 1.0
@@ -347,9 +405,15 @@ impl PrimaryProcessor {
     pub fn new(fs: f64) -> Self {
         Self {
             eq: ThreeBandEq::new(fs),
-            guard: PeakGuard::new(),
+            guard: PeakGuard::with_rate(fs),
             prev_gain: 0.0,
         }
+    }
+
+    pub fn reset(&mut self) {
+        self.eq.reset();
+        self.guard.reset();
+        self.prev_gain = 0.0;
     }
 
     pub fn process_in_place(&mut self, block: &mut [[f32; 2]], p: &PrimaryParams) {
@@ -364,11 +428,17 @@ impl PrimaryProcessor {
         };
 
         if target_gain == 0.0 && self.prev_gain == 0.0 {
+            self.eq.reset();
             self.guard.last_gr_db = 0.0;
             for f in block.iter_mut() {
                 *f = [0.0, 0.0];
             }
             return;
+        }
+
+        for f in block.iter_mut() {
+            f[0] = sanitize_sample(f[0]);
+            f[1] = sanitize_sample(f[1]);
         }
 
         let width = (p.width_pct / 100.0) as f32;
@@ -463,9 +533,18 @@ impl AuxChannelProcessor {
             lpf: StereoBiquad::default(),
             vocal: StereoBiquad::default(),
             eq: ThreeBandEq::new(fs),
-            guard: PeakGuard::new(),
+            guard: PeakGuard::with_rate(fs),
             prev_gain: 0.0,
         }
+    }
+
+    pub fn reset(&mut self) {
+        self.hpf.reset_state();
+        self.lpf.reset_state();
+        self.vocal.reset_state();
+        self.eq.reset();
+        self.guard.reset();
+        self.prev_gain = 0.0;
     }
 
     pub fn process_in_place(&mut self, block: &mut [[f32; 2]], p: &AuxParams) {
@@ -480,11 +559,20 @@ impl AuxChannelProcessor {
         };
 
         if target_gain == 0.0 && self.prev_gain == 0.0 {
+            self.hpf.reset_state();
+            self.lpf.reset_state();
+            self.vocal.reset_state();
+            self.eq.reset();
             self.guard.last_gr_db = 0.0;
             for f in block.iter_mut() {
                 *f = [0.0, 0.0];
             }
             return;
+        }
+
+        for f in block.iter_mut() {
+            f[0] = sanitize_sample(f[0]);
+            f[1] = sanitize_sample(f[1]);
         }
 
         match p.mode {
@@ -849,5 +937,35 @@ mod tests {
         let measured_ms = (p1 - (p2 - 48_000.0)) / 48.0;
         assert!((measured_ms - 224.0).abs() <= 0.5, "got {measured_ms}");
         assert!(snr1 > 8.0 && snr2 > 8.0);
+    }
+
+    #[test]
+    fn soft_limiter_is_strictly_monotonic_and_continuous() {
+        let mut prev = soft_limit_sample(0.0);
+        for step in 1..=300 {
+            let x = step as f32 * 0.01;
+            let y = soft_limit_sample(x);
+            assert!(y.is_finite() && y < 1.0 && y >= prev, "step drop at {x}: {y} < {prev}");
+            prev = y;
+        }
+        // Check around knee threshold 0.90 specifically: no jump discontinuity
+        let below = soft_limit_sample(0.8999);
+        let above = soft_limit_sample(0.9001);
+        assert!((above - below).abs() < 0.001, "cliff at 0.90: {below} -> {above}");
+    }
+
+    #[test]
+    fn biquad_recovers_from_nan_without_poisoning() {
+        let mut eq = ThreeBandEq::new(48_000.0);
+        let mut block = [[0.2_f32, -0.2], [f32::NAN, f32::INFINITY], [0.25, -0.25], [0.1, -0.1]];
+        eq.process_in_place(&mut block, 6.0, -3.0, 4.0);
+        assert!(block.iter().all(|f| f[0].is_finite() && f[1].is_finite()));
+
+        // Next block of normal sine audio must stay clean & bounded
+        let mut clean = [[0.3_f32, -0.3]; 64];
+        eq.process_in_place(&mut clean, 6.0, -3.0, 4.0);
+        assert!(clean
+            .iter()
+            .all(|f| f[0].is_finite() && f[1].is_finite() && f[0].abs() < 2.0));
     }
 }
