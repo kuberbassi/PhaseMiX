@@ -645,6 +645,7 @@ pub struct WinEndpointVol {
     pub volume_pct: f64,
     pub db: f64,
     pub mute: bool,
+    pub saved_pct: Option<f64>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -752,6 +753,7 @@ pub struct DevicesResponse {
 struct PersistedConfig {
     mixer: MixerState,
     devices: SelectedNames,
+    win_device_vols: HashMap<String, f64>,
 }
 
 struct SharedRing {
@@ -1153,27 +1155,36 @@ fn read_device_endpoint_vol(dev: &Device, id: &str, name: &str) -> Option<WinEnd
         volume_pct: ((scalar * 100.0) as f64 * 10.0).round() / 10.0,
         db: ((db as f64) * 10.0).round() / 10.0,
         mute,
+        saved_pct: None,
     })
 }
 
 pub fn query_selected_win_vols(ids: &SelectedIds) -> WinVols {
+    query_win_vols_with_saved(ids, None)
+}
+
+fn query_win_vols_with_saved(ids: &SelectedIds, saved: Option<&HashMap<String, f64>>) -> WinVols {
     ensure_com();
     let Ok(enumerator) = DeviceEnumerator::new() else {
         return WinVols::default();
     };
-    let get_one = |id: &str| -> Option<WinEndpointVol> {
+    let get_one = |id: &str, use_saved: bool| -> Option<WinEndpointVol> {
         if id.is_empty() {
             return None;
         }
         let dev = enumerator.get_device(id).ok()?;
         let name = dev.get_friendlyname().unwrap_or_default();
-        read_device_endpoint_vol(&dev, id, &name)
+        let mut info = read_device_endpoint_vol(&dev, id, &name)?;
+        if use_saved {
+            info.saved_pct = saved.and_then(|m| m.get(&name).copied());
+        }
+        Some(info)
     };
     WinVols {
-        input: get_one(&ids.input_id),
-        intex: get_one(&ids.intex_id),
-        boat: get_one(&ids.boat_id),
-        laptop: get_one(&ids.laptop_id),
+        input: get_one(&ids.input_id, false),
+        intex: get_one(&ids.intex_id, true),
+        boat: get_one(&ids.boat_id, true),
+        laptop: get_one(&ids.laptop_id, true),
     }
 }
 
@@ -1255,6 +1266,7 @@ struct EngineInner {
     selected_ids: RwLock<SelectedIds>,
     selected_names: RwLock<SelectedNames>,
     preferred_names: RwLock<SelectedNames>,
+    win_device_vols: RwLock<HashMap<String, f64>>,
     meters: RwLock<Meters>,
     telemetry: RwLock<Telemetry>,
     ring: Mutex<SharedRing>,
@@ -1264,6 +1276,25 @@ struct EngineInner {
     workers: Mutex<Vec<JoinHandle<()>>>,
     timer_guard: Mutex<Option<WinTimerGuard>>,
     save_signal: (Mutex<Option<Instant>>, Condvar),
+}
+
+fn sanitize_win_vol_map(raw: HashMap<String, f64>) -> HashMap<String, f64> {
+    raw.into_iter()
+        .filter_map(|(k, v)| {
+            let clean_k = k.trim().to_string();
+            (!clean_k.is_empty() && v.is_finite()).then(|| (clean_k, v.clamp(0.0, 100.0).round()))
+        })
+        .collect()
+}
+
+fn apply_saved_win_vol_for(inner: &EngineInner, dev_id: &str, dev_name: &str) {
+    if dev_id.is_empty() || dev_name.is_empty() {
+        return;
+    }
+    let saved = inner.win_device_vols.read().get(dev_name).copied();
+    if let Some(pct) = saved {
+        let _ = set_device_endpoint_volume(dev_id, pct.clamp(0.0, 100.0), true);
+    }
 }
 
 pub struct AudioRouterEngine {
@@ -1289,6 +1320,7 @@ impl AudioRouterEngine {
             selected_ids: RwLock::new(SelectedIds::default()),
             selected_names: RwLock::new(SelectedNames::default()),
             preferred_names: RwLock::new(SelectedNames::default()),
+            win_device_vols: RwLock::new(HashMap::new()),
             meters: RwLock::new(Meters::default()),
             telemetry: RwLock::new(Telemetry::default()),
             ring: Mutex::new(SharedRing::new()),
@@ -1372,12 +1404,14 @@ impl AudioRouterEngine {
         *inner.mixer.write() = m;
         *inner.selected_names.write() = parsed.devices.clone();
         *inner.preferred_names.write() = parsed.devices;
+        *inner.win_device_vols.write() = sanitize_win_vol_map(parsed.win_device_vols);
     }
 
     fn save_config_now(inner: &EngineInner) {
         let payload = PersistedConfig {
             mixer: inner.mixer.read().clone(),
             devices: inner.preferred_names.read().clone(),
+            win_device_vols: inner.win_device_vols.read().clone(),
         };
         let Ok(json) = serde_json::to_string_pretty(&payload) else {
             return;
@@ -1446,7 +1480,18 @@ impl AudioRouterEngine {
             Self::save_config_now(inner);
         }
 
-        let win_vols = query_selected_win_vols(&picked);
+        // Auto-restore saved Windows Device Levels on startup or speaker hot-plug attach
+        if !picked.intex_id.is_empty() && picked.intex_id != prev_ids.intex_id {
+            apply_saved_win_vol_for(inner, &picked.intex_id, &new_names.intex_name);
+        }
+        if !picked.boat_id.is_empty() && picked.boat_id != prev_ids.boat_id {
+            apply_saved_win_vol_for(inner, &picked.boat_id, &new_names.boat_name);
+        }
+        if !picked.laptop_id.is_empty() && picked.laptop_id != prev_ids.laptop_id {
+            apply_saved_win_vol_for(inner, &picked.laptop_id, &new_names.laptop_name);
+        }
+
+        let win_vols = query_win_vols_with_saved(&picked, Some(&inner.win_device_vols.read()));
         let (_, default_output_name, default_output_is_virtual) = default_render_endpoint_info();
         let changed = picked.input_id != prev_ids.input_id
             || picked.intex_id != prev_ids.intex_id
@@ -1490,6 +1535,10 @@ impl AudioRouterEngine {
             boat_name: id_to_out.get(ids.boat_id.as_str()).unwrap_or(&"").to_string(),
             laptop_name: id_to_out.get(ids.laptop_id.as_str()).unwrap_or(&"").to_string(),
         };
+        apply_saved_win_vol_for(&self.inner, &ids.intex_id, &explicit.intex_name);
+        apply_saved_win_vol_for(&self.inner, &ids.boat_id, &explicit.boat_name);
+        apply_saved_win_vol_for(&self.inner, &ids.laptop_id, &explicit.laptop_name);
+
         *self.inner.selected_names.write() = explicit.clone();
         *self.inner.preferred_names.write() = explicit;
         *self.inner.selected_ids.write() = ids;
@@ -1565,6 +1614,7 @@ impl AudioRouterEngine {
         let payload = PersistedConfig {
             mixer: self.inner.mixer.read().clone(),
             devices: self.inner.preferred_names.read().clone(),
+            win_device_vols: self.inner.win_device_vols.read().clone(),
         };
         serde_json::to_string_pretty(&payload).map_err(|e| format!("{e}"))
     }
@@ -1585,6 +1635,8 @@ impl AudioRouterEngine {
         }
         *self.inner.fast_params.write() = FastAudioParams::from_mixer(&m);
         *self.inner.mixer.write() = m;
+        *self.inner.win_device_vols.write() = sanitize_win_vol_map(parsed.win_device_vols);
+
         if !parsed.devices.input_name.is_empty()
             || !parsed.devices.intex_name.is_empty()
             || !parsed.devices.boat_name.is_empty()
@@ -1593,6 +1645,11 @@ impl AudioRouterEngine {
             *self.inner.preferred_names.write() = parsed.devices;
             Self::refresh_device_selection_inner(&self.inner, true);
         } else {
+            let ids = self.inner.selected_ids.read().clone();
+            let names = self.inner.selected_names.read().clone();
+            apply_saved_win_vol_for(&self.inner, &ids.intex_id, &names.intex_name);
+            apply_saved_win_vol_for(&self.inner, &ids.boat_id, &names.boat_name);
+            apply_saved_win_vol_for(&self.inner, &ids.laptop_id, &names.laptop_name);
             Self::save_config_now(&self.inner);
         }
         Ok(self.status_payload())
@@ -1603,6 +1660,7 @@ impl AudioRouterEngine {
         let def = MixerState::default();
         *self.inner.fast_params.write() = FastAudioParams::from_mixer(&def);
         *self.inner.mixer.write() = def;
+        self.inner.win_device_vols.write().clear();
         Self::save_config_now(&self.inner);
         self.status_payload()
     }
@@ -1852,17 +1910,57 @@ impl AudioRouterEngine {
         }
     }
 
+    fn role_device_info(&self, role: &str) -> Option<(String, String)> {
+        let ids = self.inner.selected_ids.read();
+        let names = self.inner.selected_names.read();
+        match role {
+            "input" => Some((ids.input_id.clone(), names.input_name.clone())),
+            "intex" => Some((ids.intex_id.clone(), names.intex_name.clone())),
+            "boat" => Some((ids.boat_id.clone(), names.boat_name.clone())),
+            "laptop" => Some((ids.laptop_id.clone(), names.laptop_name.clone())),
+            _ => None,
+        }
+    }
+
     pub fn set_win_vol(&self, role: &str, volume_pct: f64) -> (bool, StatusPayload) {
-        let ids = self.inner.selected_ids.read().clone();
-        let dev_id = match role {
-            "input" => ids.input_id.as_str(),
-            "intex" => ids.intex_id.as_str(),
-            "boat" => ids.boat_id.as_str(),
-            "laptop" => ids.laptop_id.as_str(),
-            _ => return (false, self.status_payload()),
+        let Some((dev_id, dev_name)) = self.role_device_info(role) else {
+            return (false, self.status_payload());
         };
-        let ok = set_device_endpoint_volume(dev_id, volume_pct.clamp(0.0, 100.0), true);
+        let pct = volume_pct.clamp(0.0, 100.0);
+        let ok = set_device_endpoint_volume(&dev_id, pct, true);
+        if ok && role != "input" && !dev_name.is_empty() {
+            self.inner.win_device_vols.write().insert(dev_name, pct.round());
+            Self::schedule_save(&self.inner);
+        }
         (ok, self.status_payload())
+    }
+
+    pub fn pin_win_vol(&self, role: &str, pin: bool) -> (bool, StatusPayload) {
+        if role == "input" {
+            return (false, self.status_payload());
+        }
+        let Some((dev_id, dev_name)) = self.role_device_info(role) else {
+            return (false, self.status_payload());
+        };
+        if dev_name.is_empty() {
+            return (false, self.status_payload());
+        }
+        if pin {
+            ensure_com();
+            let cur_pct = DeviceEnumerator::new()
+                .ok()
+                .and_then(|e| e.get_device(&dev_id).ok())
+                .and_then(|d| read_device_endpoint_vol(&d, &dev_id, &dev_name))
+                .map(|v| v.volume_pct.clamp(0.0, 100.0).round());
+            let Some(pct) = cur_pct else {
+                return (false, self.status_payload());
+            };
+            self.inner.win_device_vols.write().insert(dev_name, pct);
+        } else {
+            self.inner.win_device_vols.write().remove(&dev_name);
+        }
+        Self::save_config_now(&self.inner);
+        (true, self.status_payload())
     }
 
     pub fn boost_capture(&self) -> (bool, StatusPayload) {
@@ -1906,7 +2004,7 @@ impl AudioRouterEngine {
             meters: self.inner.meters.read().clone(),
             telemetry: self.inner.telemetry.read().clone(),
             selected_names: self.inner.selected_names.read().clone(),
-            win_vols: query_selected_win_vols(&ids),
+            win_vols: query_win_vols_with_saved(&ids, Some(&self.inner.win_device_vols.read())),
             selected: ids,
             default_output_name,
             default_output_is_virtual,
@@ -2059,6 +2157,35 @@ fn set_output_telemetry(inner: &EngineInner, role: &str, actual_ms: f64, ppm: f6
     }
 }
 
+#[inline]
+fn cosine_fade_in(buf: &mut [[f32; 2]], max_len: usize) {
+    let n = buf.len().min(max_len);
+    if n == 0 {
+        return;
+    }
+    let inv = 1.0 / (n as f32);
+    for (i, fr) in buf[..n].iter_mut().enumerate() {
+        let g = 0.5 - 0.5 * (std::f32::consts::PI * ((i + 1) as f32 * inv)).cos();
+        fr[0] *= g;
+        fr[1] *= g;
+    }
+}
+
+#[inline]
+fn cosine_fade_out_tail(buf: &mut [[f32; 2]], max_len: usize) {
+    let n = buf.len().min(max_len);
+    if n == 0 {
+        return;
+    }
+    let base = buf.len() - n;
+    let inv = 1.0 / (n as f32);
+    for (i, fr) in buf[base..].iter_mut().enumerate() {
+        let g = 0.5 + 0.5 * (std::f32::consts::PI * ((i + 1) as f32 * inv)).cos();
+        fr[0] *= g;
+        fr[1] *= g;
+    }
+}
+
 fn decode_bytes_to_stereo_48k(
     raw: &[u8],
     fmt: &WaveFormat,
@@ -2089,6 +2216,13 @@ fn decode_bytes_to_stereo_48k(
                 (SampleType::Int, 2) => {
                     let s = i16::from_le_bytes(frame[off..off + 2].try_into().unwrap_or([0; 2]));
                     s as f32 / 32768.0
+                }
+                (SampleType::Int, 3) => {
+                    let b0 = frame[off] as i32;
+                    let b1 = frame[off + 1] as i32;
+                    let b2 = frame[off + 2] as i32;
+                    let s = ((b0 | (b1 << 8) | (b2 << 16)) << 8) >> 8;
+                    (s as f64 / 8388608.0) as f32
                 }
                 (SampleType::Int, 4) => {
                     let s = i32::from_le_bytes(frame[off..off + 4].try_into().unwrap_or([0; 4]));
@@ -2128,14 +2262,14 @@ fn open_loopback_or_capture(
     let (def_period, _min_period) = client.get_device_period().unwrap_or((100_000, 100_000));
     let desired = WaveFormat::new(32, 32, SampleType::Float, MASTER_RATE as usize, 2, None);
 
-    // 1. Try low-jitter EventsShared + autoconvert directly at 48 kHz float stereo (35 ms headroom)
+    // 1. Try EventsShared + autoconvert at 48 kHz float stereo (80 ms loopback buffer prevents Windows audio drops)
     if client
         .initialize_client(
             &desired,
             Direction::Capture,
             StreamMode::EventsShared {
                 autoconvert: true,
-                buffer_duration_hns: def_period.max(350_000),
+                buffer_duration_hns: def_period.max(800_000),
             },
             None,
         )
@@ -2154,7 +2288,7 @@ fn open_loopback_or_capture(
             Direction::Capture,
             StreamMode::PollingShared {
                 autoconvert: false,
-                buffer_duration_hns: def_period.max(400_000),
+                buffer_duration_hns: def_period.max(800_000),
             },
             None,
         )
@@ -2268,6 +2402,8 @@ fn run_capture_pump(inner: Arc<EngineInner>, device_id: String) {
                 inner.telemetry.write().input_status = format!("Capturing ({cap_rate} Hz)");
                 let mut last_audio_ts = Instant::now();
                 let mut silence_pace = Instant::now();
+                let mut in_silence_state = false;
+                let mut last_cap_frame = [0.0_f32; 2];
 
                 'capture_stream: while !inner.stop_flag.load(Ordering::Relaxed) {
                     if inner.fast_params.read().test_mode != TestMode::Off
@@ -2276,7 +2412,7 @@ fn run_capture_pump(inner: Arc<EngineInner>, device_id: String) {
                         break;
                     }
                     if let Some(ref ev) = h_event {
-                        if let Err(e) = ev.wait_for_event(10) {
+                        if let Err(e) = ev.wait_for_event(8) {
                             let msg = format!("{e}");
                             if !msg.contains("timed out") && !msg.contains("Timeout") {
                                 inner.telemetry.write().input_status =
@@ -2285,7 +2421,7 @@ fn run_capture_pump(inner: Arc<EngineInner>, device_id: String) {
                             }
                         }
                     } else {
-                        thread::sleep(Duration::from_millis(8));
+                        thread::sleep(Duration::from_millis(6));
                     }
 
                     let mut got_frames = false;
@@ -2313,6 +2449,15 @@ fn run_capture_pump(inner: Arc<EngineInner>, device_id: String) {
                                     let count = (read_n as usize).min(RING_FRAMES / 2);
                                     out_48k.clear();
                                     out_48k.resize(count, [0.0, 0.0]);
+                                    if !in_silence_state {
+                                        in_silence_state = true;
+                                        if last_cap_frame[0] != 0.0 || last_cap_frame[1] != 0.0 {
+                                            let fade_n = count.min(32);
+                                            out_48k[..fade_n].fill(last_cap_frame);
+                                            cosine_fade_out_tail(&mut out_48k[..fade_n], fade_n);
+                                            last_cap_frame = [0.0, 0.0];
+                                        }
+                                    }
                                     inner.ring.lock().write(&out_48k);
                                     set_in_meter(-60.0);
                                 } else {
@@ -2324,15 +2469,13 @@ fn run_capture_pump(inner: Arc<EngineInner>, device_id: String) {
                                         &mut out_48k,
                                     );
                                     if !out_48k.is_empty() {
-                                        if info.flags.data_discontinuity {
-                                            let fade_n = out_48k.len().min(64);
-                                            for (idx, fr) in out_48k[..fade_n].iter_mut().enumerate() {
-                                                let t = (idx + 1) as f32 / (fade_n as f32);
-                                                let g = 0.5 - 0.5 * (std::f32::consts::PI * t).cos();
-                                                fr[0] *= g;
-                                                fr[1] *= g;
-                                            }
+                                        if info.flags.data_discontinuity || in_silence_state {
+                                            let fade_n =
+                                                if info.flags.data_discontinuity { 64 } else { 32 };
+                                            cosine_fade_in(&mut out_48k, fade_n);
+                                            in_silence_state = false;
                                         }
+                                        last_cap_frame = *out_48k.last().unwrap_or(&[0.0, 0.0]);
                                         inner.ring.lock().write(&out_48k);
                                         set_in_meter(block_db(&out_48k));
                                     }
@@ -2347,21 +2490,35 @@ fn run_capture_pump(inner: Arc<EngineInner>, device_id: String) {
                         }
                     }
 
-                    if !got_frames && last_audio_ts.elapsed() > Duration::from_millis(15) {
+                    // Only enter idle silence after >50 ms without loopback packets so Windows scheduling jitter never punches holes mid-song
+                    if !got_frames && last_audio_ts.elapsed() > Duration::from_millis(50) {
                         let now = Instant::now();
-                        if now.duration_since(silence_pace) > Duration::from_millis(50) {
+                        if !in_silence_state {
+                            in_silence_state = true;
                             silence_pace = now;
-                        }
-                        let mut wrote = 0;
-                        while now.duration_since(silence_pace) >= Duration::from_millis(10)
-                            && wrote < 3
-                        {
-                            silence_pace += Duration::from_millis(10);
-                            inner.ring.lock().write(&silence);
-                            wrote += 1;
-                        }
-                        if wrote > 0 {
+                            let mut tail = silence;
+                            if last_cap_frame[0] != 0.0 || last_cap_frame[1] != 0.0 {
+                                tail[..32].fill(last_cap_frame);
+                                cosine_fade_out_tail(&mut tail[..32], 32);
+                                last_cap_frame = [0.0, 0.0];
+                            }
+                            inner.ring.lock().write(&tail);
                             set_in_meter(-60.0);
+                        } else {
+                            if now.duration_since(silence_pace) > Duration::from_millis(120) {
+                                silence_pace = now - Duration::from_millis(40);
+                            }
+                            let mut wrote = 0;
+                            while now.duration_since(silence_pace) >= Duration::from_millis(10)
+                                && wrote < 6
+                            {
+                                silence_pace += Duration::from_millis(10);
+                                inner.ring.lock().write(&silence);
+                                wrote += 1;
+                            }
+                            if wrote > 0 {
+                                set_in_meter(-60.0);
+                            }
                         }
                     } else if got_frames {
                         silence_pace = Instant::now();
@@ -2416,8 +2573,8 @@ fn open_render_client(dev: &Device) -> Result<(AudioClient, WaveFormat, wasapi::
         .get_friendlyname()
         .map(|n| is_wireless_device_name(&n))
         .unwrap_or(false);
-    // Give Bluetooth 45 ms and wired/built-in speakers 25 ms shared engine buffer slack to stop crackles
-    let min_hns = if is_bt { 450_000 } else { 250_000 };
+    // Give Bluetooth 70 ms and wired/built-in speakers 35 ms shared engine buffer slack to stop crackles
+    let min_hns = if is_bt { 700_000 } else { 350_000 };
     let desired = WaveFormat::new(32, 32, SampleType::Float, MASTER_RATE as usize, 2, None);
 
     // Prefer EventsShared with autoconvert so hardware (including 44.1kHz Bluetooth) runs smoothly
@@ -2593,37 +2750,62 @@ fn run_output_loop(inner: Arc<EngineInner>, role: String, initial_id: String) {
                         let desired_pos = (w as f64 - target_lag).max(min_valid);
                         let mut diff = desired_pos - read_pos;
 
-                        // Keep gentle jitter smoothing; snap only on user delay changes, genuine underrun/wrap, or >220 ms shift
+                        let user_delay_changed = (delay_ms - prev_delay_ms).abs() > 0.5;
+                        if user_delay_changed {
+                            prev_delay_ms = delay_ms;
+                        }
                         let step_est = MASTER_RATE_F64 / (out_rate as f64);
                         let block_need = (avail as f64) * step_est + 32.0;
-                        let underrun = read_pos + block_need >= w as f64;
                         let overflow = read_pos < min_valid;
+                        let underrun = read_pos + block_need >= w as f64;
+                        let excess_lag = diff > MASTER_RATE_F64 * 0.22
+                            || (user_delay_changed && diff.abs() > 240.0);
 
-                        if (delay_ms - prev_delay_ms).abs() > 0.5
-                            || diff.abs() > MASTER_RATE_F64 * 0.22
-                            || underrun
-                            || overflow
-                        {
-                            prev_delay_ms = delay_ms;
-                            if diff.abs() > 240.0 || underrun || overflow {
-                                read_pos = desired_pos.min(w as f64 - block_need).max(min_valid);
-                                smoothed_diff = 0.0;
-                                do_resync_fade = true;
-                                diff = 0.0;
-                            }
+                        let mut underrun_valid_frames: Option<usize> = None;
+                        if overflow || excess_lag {
+                            read_pos = desired_pos.min(w as f64 - block_need).max(min_valid);
+                            smoothed_diff = 0.0;
+                            do_resync_fade = true;
+                            diff = 0.0;
+                        } else if underrun {
+                            // Never rewind backwards over already-played samples: consume unread tail smoothly
+                            let unread = ((w as f64 - 2.0 - read_pos) / step_est)
+                                .floor()
+                                .max(0.0) as usize;
+                            underrun_valid_frames = Some(unread.min(avail));
+                            do_resync_fade = true;
+                            smoothed_diff = 0.0;
+                            diff = 0.0;
                         }
 
-                        // 6 ms jitter deadband + ±1200 ppm smooth clock drift tracking
-                        smoothed_diff = 0.995 * smoothed_diff + 0.005 * diff;
-                        let rate_adj = if smoothed_diff.abs() < 288.0 {
+                        // Time-normalized EMA (tau = 3.0 s), 1.5 ms phase-lock deadband & gentle ±400 ppm slew
+                        let block_dt = (avail as f64) / (out_rate as f64).max(8000.0);
+                        let ema_alpha = (1.0 - (-block_dt / 3.0).exp()).clamp(0.001, 0.15);
+                        smoothed_diff = (1.0 - ema_alpha) * smoothed_diff + ema_alpha * diff;
+                        let rate_adj = if smoothed_diff.abs() < 72.0 {
                             1.0
                         } else {
-                            1.0 + (smoothed_diff / (MASTER_RATE_F64 * 14.0)).clamp(-0.0012, 0.0012)
+                            1.0 + (smoothed_diff / (MASTER_RATE_F64 * 18.0))
+                                .clamp(-0.0004, 0.0004)
                         };
                         let step = step_est * rate_adj;
                         let read_start = read_pos;
-                        ring.read_interpolated(read_pos, &mut block_buf, step);
-                        read_pos += (avail as f64) * step;
+                        if let Some(valid_n) = underrun_valid_frames {
+                            block_buf.fill([0.0, 0.0]);
+                            if valid_n > 0 {
+                                ring.read_interpolated(
+                                    read_pos,
+                                    &mut block_buf[..valid_n],
+                                    step_est,
+                                );
+                                cosine_fade_out_tail(&mut block_buf[..valid_n], 32);
+                                read_pos = (read_pos + (valid_n as f64) * step_est)
+                                    .min((w as f64 - 2.0).max(min_valid));
+                            }
+                        } else {
+                            ring.read_interpolated(read_pos, &mut block_buf, step);
+                            read_pos += (avail as f64) * step;
+                        }
                         (w, rate_adj, read_start, step)
                     };
 
@@ -2803,6 +2985,7 @@ fn run_output_loop(inner: Arc<EngineInner>, role: String, initial_id: String) {
                 if !saved_name.is_empty() {
                     let (_, outs, _) = list_wasapi_devices();
                     if let Some(found) = outs.iter().find(|d| d.name == saved_name) {
+                        apply_saved_win_vol_for(&inner, &found.id, &found.name);
                         dev_id = found.id.clone();
                         let mut ids = inner.selected_ids.write();
                         let mut names = inner.selected_names.write();
@@ -2834,9 +3017,13 @@ fn apply_win_key_delta(m: &mut MixerState, scalar: f32, unity_scalar: f32) -> bo
     }
     let steps = (diff / 0.02).round();
     let delta = if steps.abs() <= 3.0 {
-        steps * 4.0
+        if m.master_vol < 14.0 || (steps < 0.0 && m.master_vol <= 14.0) {
+            steps * 1.0
+        } else {
+            steps * 2.0
+        }
     } else {
-        diff * 120.0
+        diff * 100.0
     };
     let cap = if m.protection_enabled {
         m.protection_max_master
@@ -2882,7 +3069,7 @@ fn run_win_key_bridge(inner: Arc<EngineInner>, input_id: String) {
     let mut com_err_streak: u32 = 0;
 
     while !inner.stop_flag.load(Ordering::Relaxed) {
-        thread::sleep(Duration::from_millis(60));
+        thread::sleep(Duration::from_millis(20));
         if inner.stop_flag.load(Ordering::Relaxed) {
             break;
         }
@@ -3206,15 +3393,24 @@ mod tests {
         assert!(!apply_win_key_delta(&mut m, 0.985, 0.98));
         assert_eq!(m.master_vol, 25.0);
 
+        // Above 14% uses Windows native 2% step
         assert!(apply_win_key_delta(&mut m, 1.00, 0.98));
-        assert_eq!(m.master_vol, 29.0);
+        assert_eq!(m.master_vol, 27.0);
+
+        // Low-end (< 14%) uses 1% micro-steps for smooth night control
+        m.master_vol = 0.0;
+        assert!(apply_win_key_delta(&mut m, 1.00, 0.98));
+        assert_eq!(m.master_vol, 1.0);
+        m.master_vol = 14.0;
+        assert!(apply_win_key_delta(&mut m, 0.96, 0.98));
+        assert_eq!(m.master_vol, 13.0);
 
         assert!(apply_win_key_delta(&mut m, 1.98, 0.98));
         assert_eq!(m.master_vol, 60.0);
 
         m.protection_enabled = false;
         assert!(apply_win_key_delta(&mut m, 1.98, 0.98));
-        assert_eq!(m.master_vol, 180.0);
+        assert_eq!(m.master_vol, 160.0);
         let _fp = FastAudioParams::from_mixer(&m);
 
         let stamp = SystemTime::now()
@@ -3235,6 +3431,43 @@ mod tests {
 
         let preset = eng.apply_preset("wide_room").unwrap();
         assert_eq!(preset.position_preset, "wide_room");
+
+        let _ = fs::remove_file(&cfg);
+        let _ = fs::remove_file(AudioRouterEngine::backup_path(&cfg));
+    }
+
+    #[test]
+    fn saved_win_device_vols_roundtrip_and_sanitize() {
+        let mut dirty = HashMap::new();
+        dirty.insert("".to_string(), 50.0);
+        dirty.insert("Headphones (Stone 358 Pro)".to_string(), 140.0);
+        dirty.insert("Headphones (Realtek(R) Audio)".to_string(), 38.4);
+        dirty.insert("Bad NaN".to_string(), f64::NAN);
+        let cleaned = sanitize_win_vol_map(dirty);
+        assert_eq!(cleaned.len(), 2);
+        assert_eq!(cleaned.get("Headphones (Stone 358 Pro)"), Some(&100.0));
+        assert_eq!(cleaned.get("Headphones (Realtek(R) Audio)"), Some(&38.0));
+
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let cfg = std::env::temp_dir().join(format!("phasemix_winvol_{stamp}.json"));
+        let eng = AudioRouterEngine::new(cfg.clone());
+        let _ = eng
+            .import_profile_json(
+                r#"{"mixer":{"master_vol":20},"devices":{},"win_device_vols":{"Offline Test Speaker":42.7}}"#,
+            )
+            .unwrap();
+        assert_eq!(
+            eng.inner.win_device_vols.read().get("Offline Test Speaker"),
+            Some(&43.0)
+        );
+        let exported = eng.export_profile_json().unwrap();
+        assert!(exported.contains("Offline Test Speaker"));
+
+        let _ = eng.reset_factory();
+        assert!(eng.inner.win_device_vols.read().is_empty());
 
         let _ = fs::remove_file(&cfg);
         let _ = fs::remove_file(AudioRouterEngine::backup_path(&cfg));

@@ -23,6 +23,7 @@ interface SpeakerRowProps {
   onDeviceChange: (deviceId: string) => void;
   onPatch: (patch: Partial<MixerState>) => void;
   onSetWinVol: (role: Role, pct: number) => void;
+  onPinWinVol: (role: Role, pin: boolean) => void;
 }
 
 export const SpeakerRow = memo(function SpeakerRow({
@@ -39,6 +40,7 @@ export const SpeakerRow = memo(function SpeakerRow({
   onDeviceChange,
   onPatch,
   onSetWinVol,
+  onPinWinVol,
 }: SpeakerRowProps) {
   const volKey = `${role}_vol` as keyof MixerState;
   const muteKey = `${role}_mute` as keyof MixerState;
@@ -167,6 +169,7 @@ export const SpeakerRow = memo(function SpeakerRow({
             winVol={winVol}
             onPatch={onPatch}
             onSetWinVol={onSetWinVol}
+            onPinWinVol={onPinWinVol}
           />
         </Suspense>
       </SmoothCollapse>

@@ -16,6 +16,7 @@ interface SpeakerEqDrawerProps {
   winVol: WinEndpointVol | null;
   onPatch: (patch: Partial<MixerState>) => void;
   onSetWinVol: (role: Role, pct: number) => void;
+  onPinWinVol: (role: Role, pin: boolean) => void;
 }
 
 const ROLE_MODE_OPTIONS: { value: AuxMode; label: string; tag: string }[] = [
@@ -31,6 +32,7 @@ export const SpeakerEqDrawer = memo(function SpeakerEqDrawer({
   winVol,
   onPatch,
   onSetWinVol,
+  onPinWinVol,
 }: SpeakerEqDrawerProps) {
   const muteKey = `${role}_mute` as keyof MixerState;
   const delayKey = `${role}_delay_ms` as keyof MixerState;
@@ -348,8 +350,36 @@ export const SpeakerEqDrawer = memo(function SpeakerEqDrawer({
           )}
 
           <div>
-            <div className="mb-1 flex items-center justify-between text-[11px] text-zinc-400">
-              <span>Windows Device Level</span>
+            <div className="mb-1 flex items-center justify-between gap-2 text-[11px] text-zinc-400">
+              <div className="flex items-center gap-1.5">
+                <span>Windows Device Level</span>
+                {winVol && winVol.name && (
+                  <WarmTooltip
+                    content={
+                      winVol.saved_pct != null
+                        ? `Auto-restores ${winVol.saved_pct}% on startup & BT reconnect — click to unpin`
+                        : "Save current Windows level so PhaseMiX restores it across boots & BT reconnects"
+                    }
+                    surfaceColor="#242730"
+                    inkColor="#f4f5f7"
+                    size="sm"
+                  >
+                    <button
+                      type="button"
+                      onClick={() => onPinWinVol(role, winVol.saved_pct == null)}
+                      className={`rounded-md px-1.5 py-0.5 font-mono text-[10px] transition ${
+                        winVol.saved_pct != null
+                          ? "bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-500/30 hover:bg-emerald-500/25"
+                          : "bg-white/[0.06] text-zinc-400 hover:bg-white/[0.12] hover:text-zinc-200"
+                      }`}
+                    >
+                      {winVol.saved_pct != null
+                        ? `Auto ${Math.round(winVol.saved_pct)}%`
+                        : `Pin ${Math.round(winVol.volume_pct)}%`}
+                    </button>
+                  </WarmTooltip>
+                )}
+              </div>
               <span
                 className={`font-mono tabular-nums ${
                   winVol && winVol.volume_pct > 65 ? "text-amber-300" : ""

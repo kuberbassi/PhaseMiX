@@ -70,6 +70,10 @@ export const mixerApi = {
     IS_TAURI
       ? invoke<StatusPayload>("set_win_vol", { role, volume_pct })
       : req<StatusPayload>("/api/set_win_vol", "POST", { role, volume_pct }),
+  pinWinVol: (role: Role, pin: boolean) =>
+    IS_TAURI
+      ? invoke<StatusPayload>("pin_win_vol", { role, pin })
+      : req<StatusPayload>("/api/pin_win_vol", "POST", { role, pin }),
   openSoundSettings: () =>
     IS_TAURI ? invoke<{ ok: boolean }>("open_sound_settings") : req<{ ok: boolean }>("/api/open_sound_settings", "POST", {}),
   getAutostart: () =>

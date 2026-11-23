@@ -80,7 +80,7 @@ export const PillVolumeSlider = memo(function PillVolumeSlider({
       onPointerCancel={onUp}
       onKeyDown={(e) => {
         if (disabled) return;
-        const step = e.shiftKey ? 10 : 2;
+        const step = e.shiftKey ? 5 : 1;
         if (e.key === "ArrowRight" || e.key === "ArrowUp") {
           e.preventDefault();
           onChange(Math.min(max, clamped + step));

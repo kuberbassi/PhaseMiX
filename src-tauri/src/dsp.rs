@@ -276,11 +276,39 @@ fn soft_limit_sample(v: f32) -> f32 {
     }
 }
 
-/// Smooth ear-safe output peak limiter with sample-rate-scaled release & sub-ms transient catch.
+/// Windows-matched perceptual master curve (`0% = 0`, `4% = -47 dB`, `25% = -27 dB`, `100% = 0 dB`).
+#[inline]
+pub fn perceptual_master_gain(vol_pct: f64) -> f64 {
+    if !vol_pct.is_finite() || vol_pct <= 0.0 {
+        return 0.0;
+    }
+    if vol_pct <= 100.0 {
+        let x = vol_pct / 100.0;
+        x * 10.0_f64.powf(-(1.0 - x))
+    } else {
+        (vol_pct / 100.0).min(2.0)
+    }
+}
+
+/// Smooth perceptual speaker-trim curve (`0..100%` follows `x^1.5`, `100..200%` linear up to `+6 dB`).
+#[inline]
+pub fn perceptual_channel_gain(vol_pct: f64) -> f64 {
+    if !vol_pct.is_finite() || vol_pct <= 0.0 {
+        return 0.0;
+    }
+    if vol_pct <= 100.0 {
+        (vol_pct / 100.0).powf(1.5)
+    } else {
+        (vol_pct / 100.0).min(2.0)
+    }
+}
+
+/// Smooth ear-safe output peak limiter with sample-rate-scaled release, hold window & sub-ms transient catch.
 #[derive(Clone, Debug)]
 pub struct PeakGuard {
     fs: f64,
     env: f64,
+    hold_samples: usize,
     pub last_gr_db: f64,
 }
 
@@ -293,20 +321,23 @@ impl PeakGuard {
         Self {
             fs: fs.max(8_000.0),
             env: 1.0,
+            hold_samples: 0,
             last_gr_db: 0.0,
         }
     }
 
     pub fn reset(&mut self) {
         self.env = 1.0;
+        self.hold_samples = 0;
         self.last_gr_db = 0.0;
     }
 
     pub fn process_in_place(&mut self, block: &mut [[f32; 2]], enabled: bool, ceiling_db: f64) {
         if !enabled || block.is_empty() {
             let dt = block.len() as f64 / self.fs;
-            let rel = 1.0 - (-dt / 0.10).exp();
+            let rel = 1.0 - (-dt / 0.15).exp();
             self.env += (1.0 - self.env) * rel.max(0.05);
+            self.hold_samples = 0;
             self.last_gr_db = 0.0;
             for frame in block.iter_mut() {
                 frame[0] = soft_limit_sample(sanitize_sample(frame[0]));
@@ -329,13 +360,23 @@ impl PeakGuard {
             1.0
         };
         let dt = (block.len() as f64 / self.fs).max(0.001);
-        let alpha = if target_gain < self.env {
-            0.94
+        let next_env = if target_gain < self.env {
+            // Fast transient catch plus 180 ms hold prevents beat/vocal pumping
+            self.hold_samples = (self.fs * 0.18).round() as usize;
+            ((1.0 - 0.94) * self.env + 0.94 * target_gain).clamp(0.01, 1.0)
+        } else if self.hold_samples > 0 {
+            self.hold_samples = self.hold_samples.saturating_sub(block.len());
+            self.env
         } else {
-            // Smooth 160 ms release constant independent of 5-45 ms WASAPI packet size
-            1.0 - (-dt / 0.16).exp()
+            // Smooth 450 ms release prevents audible volume breathing
+            let alpha = 1.0 - (-dt / 0.45).exp();
+            let rel = ((1.0 - alpha) * self.env + alpha * target_gain).clamp(0.01, 1.0);
+            if (1.0 - rel) < 1e-4 && target_gain >= 1.0 {
+                1.0
+            } else {
+                rel
+            }
         };
-        let next_env = ((1.0 - alpha) * self.env + alpha * target_gain).clamp(0.01, 1.0);
         let block_len = block.len();
         // Engage transient gain reduction rapidly (~0.5 ms ramp) instead of trailing the entire block
         let ramp_len = if next_env < self.env {
@@ -357,7 +398,7 @@ impl PeakGuard {
             0.0
         };
 
-        let knee = (ceiling_lin * 0.85) as f32;
+        let knee = (ceiling_lin * 0.94) as f32;
         let headroom = ((ceiling_lin - knee as f64).max(1e-4)) as f32;
         let ceil_f32 = ceiling_lin as f32;
 
@@ -424,7 +465,7 @@ impl PrimaryProcessor {
         let target_gain = if p.mute {
             0.0
         } else {
-            (p.master_vol / 100.0) * (p.vol / 100.0)
+            perceptual_master_gain(p.master_vol) * perceptual_channel_gain(p.vol)
         };
 
         if target_gain == 0.0 && self.prev_gain == 0.0 {
@@ -555,7 +596,7 @@ impl AuxChannelProcessor {
         let target_gain = if p.mute {
             0.0
         } else {
-            (p.master_vol / 100.0) * (p.vol / 100.0)
+            perceptual_master_gain(p.master_vol) * perceptual_channel_gain(p.vol)
         };
 
         if target_gain == 0.0 && self.prev_gain == 0.0 {
@@ -967,5 +1008,53 @@ mod tests {
         assert!(clean
             .iter()
             .all(|f| f[0].is_finite() && f[1].is_finite() && f[0].abs() < 2.0));
+    }
+
+    #[test]
+    fn perceptual_master_gain_matches_windows_curve_and_monotonic() {
+        assert_eq!(perceptual_master_gain(0.0), 0.0);
+        let g4 = perceptual_master_gain(4.0);
+        let g25 = perceptual_master_gain(25.0);
+        let g50 = perceptual_master_gain(50.0);
+        let g100 = perceptual_master_gain(100.0);
+        let g200 = perceptual_master_gain(200.0);
+
+        // 4% must stay whisper-quiet (-45 to -49 dB) rather than linear 0.04 (-28 dB)
+        assert!(g4 > 0.003 && g4 < 0.0055, "g4={g4}");
+        assert!((g25 - 0.0445).abs() < 0.002, "g25={g25}");
+        assert!((g50 - 0.1581).abs() < 0.002, "g50={g50}");
+        assert!((g100 - 1.0).abs() < 1e-6);
+        assert!((g200 - 2.0).abs() < 1e-6);
+
+        let mut prev = 0.0;
+        for step in 1..=200 {
+            let g = perceptual_master_gain(step as f64);
+            assert!(g > prev, "non-monotonic at {step}: {g} <= {prev}");
+            prev = g;
+        }
+        assert!(perceptual_channel_gain(0.0) == 0.0);
+        assert!((perceptual_channel_gain(100.0) - 1.0).abs() < 1e-6);
+        assert!((perceptual_channel_gain(200.0) - 2.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn peak_guard_holds_steadily_without_rapid_pumping() {
+        let mut pg = PeakGuard::with_rate(48_000.0);
+        let mut spike = [[0.9_f32, -0.9]; 480];
+        pg.process_in_place(&mut spike, true, -12.0);
+        let after_spike = pg.last_gr_db;
+        assert!(after_spike < -1.0, "expected initial GR, got {after_spike}");
+
+        // Next 100 ms of normal quiet blocks must hold steady instead of pumping immediately
+        for _ in 0..10 {
+            let mut body = [[0.1_f32, -0.1]; 480];
+            pg.process_in_place(&mut body, true, -12.0);
+            assert!(
+                (pg.last_gr_db - after_spike).abs() < 0.15,
+                "pumped inside hold window: {} vs {}",
+                pg.last_gr_db,
+                after_spike
+            );
+        }
     }
 }

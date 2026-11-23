@@ -367,6 +367,21 @@ async fn set_win_vol(
 }
 
 #[tauri::command(rename_all = "snake_case")]
+async fn pin_win_vol(
+    state: State<'_, AppState>,
+    role: String,
+    pin: bool,
+) -> Result<OkStatusResponse, String> {
+    let eng = state.engine.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let (ok, status) = eng.pin_win_vol(&role, pin);
+        OkStatusResponse { ok, status }
+    })
+    .await
+    .map_err(|e| format!("{e}"))
+}
+
+#[tauri::command(rename_all = "snake_case")]
 fn open_sound_settings() -> OkResponse {
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     let launched = Command::new("cmd")
@@ -510,6 +525,7 @@ pub fn run() {
             stop_engine,
             boost_capture,
             set_win_vol,
+            pin_win_vol,
             open_sound_settings,
             get_autostart,
             set_autostart,

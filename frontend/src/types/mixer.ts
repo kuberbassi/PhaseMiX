@@ -60,6 +60,7 @@ export interface WinEndpointVol {
   volume_pct: number;
   db?: number;
   mute: boolean;
+  saved_pct?: number | null;
 }
 
 export interface Telemetry {

@@ -464,7 +464,9 @@ export function App() {
       lastWinEditRef.current = Date.now();
       setWinVols((prev) => {
         const cur = prev[role];
-        return cur ? { ...prev, [role]: { ...cur, volume_pct: pct, mute: false } } : prev;
+        return cur
+          ? { ...prev, [role]: { ...cur, volume_pct: pct, mute: false, saved_pct: Math.round(pct) } }
+          : prev;
       });
       pendingWinRef.current = { role, pct };
       const elapsed = performance.now() - lastWinSentRef.current;
@@ -482,6 +484,19 @@ export function App() {
       }
     },
     [flushWinVol]
+  );
+
+  const handlePinWinVol = useCallback(
+    async (role: Role, pin: boolean) => {
+      lastWinEditRef.current = Date.now();
+      try {
+        const res = await mixerApi.pinWinVol(role, pin);
+        applyFullPayload(res, false);
+      } catch {
+        // Ignored on offline
+      }
+    },
+    [applyFullPayload]
   );
 
   const handleDeviceChange = useCallback(
@@ -1252,6 +1267,7 @@ export function App() {
                       onDeviceChange={onIntexDev}
                       onPatch={patchMixer}
                       onSetWinVol={handleSetWinVol}
+                      onPinWinVol={handlePinWinVol}
                     />
 
                     <SpeakerRow
@@ -1268,6 +1284,7 @@ export function App() {
                       onDeviceChange={onBoatDev}
                       onPatch={patchMixer}
                       onSetWinVol={handleSetWinVol}
+                      onPinWinVol={handlePinWinVol}
                     />
 
                     <SpeakerRow
@@ -1284,6 +1301,7 @@ export function App() {
                       onDeviceChange={onLaptopDev}
                       onPatch={patchMixer}
                       onSetWinVol={handleSetWinVol}
+                      onPinWinVol={handlePinWinVol}
                     />
                   </div>
                 </section>
