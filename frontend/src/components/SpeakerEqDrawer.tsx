@@ -349,15 +349,10 @@ export const SpeakerEqDrawer = memo(function SpeakerEqDrawer({
 
           <div>
             <div className="mb-1 flex items-center justify-between text-[11px] text-zinc-400">
-              <span>
-                Windows Device Level
-                {mixer.protection_enabled && (
-                  <span className="ml-1.5 text-[10px] text-zinc-500">(Ear-Safe max 50%)</span>
-                )}
-              </span>
+              <span>Windows Device Level</span>
               <span
                 className={`font-mono tabular-nums ${
-                  winVol && winVol.volume_pct > 50 ? "text-amber-300" : ""
+                  winVol && winVol.volume_pct > 65 ? "text-amber-300" : ""
                 }`}
               >
                 {winVol ? `${winVol.volume_pct}%${winVol.db != null ? ` (${winVol.db} dB)` : ""}` : "--"}
@@ -366,12 +361,9 @@ export const SpeakerEqDrawer = memo(function SpeakerEqDrawer({
             <div className="flex items-center gap-2">
               <div className="flex-1">
                 <WakeSlider
-                  value={Math.min(
-                    mixer.protection_enabled ? 50 : 100,
-                    winVol ? Math.round(winVol.volume_pct) : 15
-                  )}
+                  value={Math.min(100, winVol ? Math.round(winVol.volume_pct) : 15)}
                   min={0}
-                  max={mixer.protection_enabled ? 50 : 100}
+                  max={100}
                   step={1}
                   bars={28}
                   height={20}
@@ -385,7 +377,7 @@ export const SpeakerEqDrawer = memo(function SpeakerEqDrawer({
                 />
               </div>
               <div className="flex gap-1">
-                {[15, 35, 50].map((pct) => (
+                {[15, 35, 50, 100].map((pct) => (
                   <button
                     key={pct}
                     type="button"

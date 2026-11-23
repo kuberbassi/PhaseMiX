@@ -1723,13 +1723,7 @@ impl AudioRouterEngine {
             "laptop" => ids.laptop_id.as_str(),
             _ => return (false, self.status_payload()),
         };
-        // Ear-Safe guard caps manual Windows hardware endpoint changes at 50% when active
-        let max_pct = if role != "input" && self.inner.mixer.read().protection_enabled {
-            50.0
-        } else {
-            100.0
-        };
-        let ok = set_device_endpoint_volume(dev_id, volume_pct.clamp(0.0, max_pct), true);
+        let ok = set_device_endpoint_volume(dev_id, volume_pct.clamp(0.0, 100.0), true);
         (ok, self.status_payload())
     }
 
