@@ -10,6 +10,7 @@
 ![Engine](https://img.shields.io/badge/Audio-WASAPI%20Loopback%2048kHz-181a20?style=flat-square)
 ![UI](https://img.shields.io/badge/UI-React%2019%20%2B%20Three.js-181a20?style=flat-square&logo=react&logoColor=61DAFB)
 ![Core](https://img.shields.io/badge/Core-Rust%20%2B%20Tauri%20v2-22c55e?style=flat-square&logo=rust&logoColor=white)
+![License](https://img.shields.io/badge/License-MIT-181a20?style=flat-square)
 
 </div>
 
@@ -88,3 +89,9 @@ npx tauri build --bundles nsis
 cd frontend && npm install
 npx tauri dev
 ```
+
+---
+
+## License
+
+Released under the [MIT License](LICENSE) — free to use, modify, and customize for your own setups.
