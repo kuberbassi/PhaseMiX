@@ -127,7 +127,11 @@ npx tauri build --bundles nsis
 
 ## Quick Start (Dev Mode)
 
+Requires **Node.js 18+**, **Rust (Cargo)**, and **Windows Tauri v2 prerequisites** (Visual Studio C++ Build Tools + WebView2).
+
 ```powershell
+git clone https://github.com/kuberbassi/PhaseMiX.git
+cd PhaseMiX
 cd frontend && npm install
 npx tauri dev
 ```
