@@ -16,6 +16,8 @@ import {
   MoonStars,
   MusicNotes,
   Play,
+  Plugs,
+  Plus,
   Power,
   Record,
   ShieldCheck,
@@ -70,40 +72,47 @@ const INITIAL_MIXER: MixerState = {
   master_mute: false,
   protection_enabled: true,
   protection_max_master: 60,
-  protection_ceiling_db: -6,
+  protection_ceiling_db: -3,
   position_preset: "desk_triangle",
-  intex_vol: 100,
+  intex_vol: 105,
   intex_mute: false,
-  intex_delay_ms: 224,
+  intex_delay_ms: 0,
   intex_balance: 0,
-  intex_bass_db: 0.5,
-  intex_mid_db: -2.0,
-  intex_treble_db: 0.5,
-  intex_width: 106,
-  boat_vol: 60,
+  intex_bass_db: 1.0,
+  intex_mid_db: -0.5,
+  intex_treble_db: 1.0,
+  intex_width: 108,
+  boat_vol: 95,
   boat_mute: false,
   boat_delay_ms: 0,
-  boat_mode: "vocal_mid",
-  boat_hpf_hz: 260,
-  boat_lpf_hz: 14000,
-  boat_bass_db: -2.5,
-  boat_mid_db: 2.0,
+  boat_mode: "stereo",
+  boat_hpf_hz: 120,
+  boat_lpf_hz: 18000,
+  boat_bass_db: 0.0,
+  boat_mid_db: 0.5,
   boat_treble_db: 0.5,
   boat_invert: false,
-  laptop_vol: 125,
+  laptop_vol: 115,
   laptop_mute: false,
-  laptop_delay_ms: 224,
+  laptop_delay_ms: 0,
   laptop_mode: "stereo",
-  laptop_hpf_hz: 300,
+  laptop_hpf_hz: 210,
   laptop_lpf_hz: 18000,
-  laptop_bass_db: -2.0,
-  laptop_mid_db: 0.0,
+  laptop_bass_db: -1.0,
+  laptop_mid_db: 1.5,
   laptop_treble_db: 2.0,
   laptop_invert: false,
   solo: null,
   test_mode: "off",
   calibrated_delay_ms: null,
 };
+
+function isWirelessName(name?: string | null): boolean {
+  if (!name) return false;
+  return /\b(bt|bluetooth|anc)\b|3\.0 bt|stone|earbuds|soundcore|jbl|sony|bose|marshall|airpods|sennheiser|jabra|beats/i.test(
+    name
+  );
+}
 
 function presetIcon(id: string) {
   switch (id) {
@@ -139,7 +148,8 @@ export function App() {
     laptop: null,
   });
 
-  const [expandedRole, setExpandedRole] = useState<Role | null>("boat");
+  const [expandedRole, setExpandedRole] = useState<Role | null>(null);
+  const [thirdSpeakerManual, setThirdSpeakerManual] = useState(false);
   const [systemDrawerOpen, setSystemDrawerOpen] = useState(false);
   const [stageOpen, setStageOpen] = useState(true);
   const [offline, setOffline] = useState(false);
@@ -151,10 +161,15 @@ export function App() {
     () => localStorage.getItem("phasemix_compact_mode") === "1"
   );
   const [delayLinked, setDelayLinked] = useState<boolean>(
-    () => localStorage.getItem("phasemix_delay_linked") !== "0"
+    () => localStorage.getItem("phasemix_delay_linked") === "1"
   );
+  const showThirdSpeaker = thirdSpeakerManual || Boolean(selected.boat_id);
+  const showThirdRef = useRef(showThirdSpeaker);
   const delayLinkedRef = useRef(delayLinked);
-  delayLinkedRef.current = delayLinked;
+  useEffect(() => {
+    showThirdRef.current = showThirdSpeaker;
+    delayLinkedRef.current = delayLinked;
+  }, [showThirdSpeaker, delayLinked]);
 
   const [toast, setToast] = useState<ToastEvent | null>(null);
   const toastTimerRef = useRef<number | null>(null);
@@ -181,6 +196,7 @@ export function App() {
   const pendingWinRef = useRef<{ role: Role; pct: number } | null>(null);
   const winTimerRef = useRef<number | null>(null);
   const lastWinSentRef = useRef<number>(0);
+  const winReqSeqRef = useRef<number>(0);
 
   const lastLocalEditRef = useRef<number>(0);
   const lastWinEditRef = useRef<number>(0);
@@ -417,7 +433,7 @@ export function App() {
     (patch: Partial<MixerState>) => {
       lastLocalEditRef.current = Date.now();
       const toSend = { ...patch };
-      if (delayLinkedRef.current) {
+      if (delayLinkedRef.current && showThirdRef.current) {
         if (toSend.intex_delay_ms !== undefined && toSend.laptop_delay_ms === undefined) {
           toSend.laptop_delay_ms = toSend.intex_delay_ms;
         } else if (toSend.laptop_delay_ms !== undefined && toSend.intex_delay_ms === undefined) {
@@ -456,16 +472,26 @@ export function App() {
     if (!item) return;
     pendingWinRef.current = null;
     lastWinSentRef.current = performance.now();
-    void mixerApi.setWinVol(item.role, item.pct).then((res) => applyFullPayload(res, false));
+    const reqSeq = winReqSeqRef.current;
+    void mixerApi.setWinVol(item.role, item.pct).then((res) => {
+      if (reqSeq === winReqSeqRef.current && res.win_vols) {
+        setWinVols(res.win_vols);
+      }
+      applyFullPayload(res, false);
+    });
   }, [applyFullPayload]);
 
   const handleSetWinVol = useCallback(
     (role: Role, pct: number) => {
       lastWinEditRef.current = Date.now();
+      winReqSeqRef.current += 1;
       setWinVols((prev) => {
         const cur = prev[role];
         return cur
-          ? { ...prev, [role]: { ...cur, volume_pct: pct, mute: false, saved_pct: Math.round(pct) } }
+          ? {
+              ...prev,
+              [role]: { ...cur, volume_pct: pct, db: undefined, mute: false, saved_pct: Math.round(pct) },
+            }
           : prev;
       });
       pendingWinRef.current = { role, pct };
@@ -489,8 +515,13 @@ export function App() {
   const handlePinWinVol = useCallback(
     async (role: Role, pin: boolean) => {
       lastWinEditRef.current = Date.now();
+      winReqSeqRef.current += 1;
+      const reqSeq = winReqSeqRef.current;
       try {
         const res = await mixerApi.pinWinVol(role, pin);
+        if (reqSeq === winReqSeqRef.current && res.win_vols) {
+          setWinVols(res.win_vols);
+        }
         applyFullPayload(res, false);
       } catch {
         // Ignored on offline
@@ -505,13 +536,89 @@ export function App() {
       setSelected(next);
       try {
         const res = await mixerApi.setDevices(next);
-        applyFullPayload(res, false);
+        applyFullPayload(res, true);
       } catch {
         // Ignored on offline
       }
     },
     [selected, applyFullPayload]
   );
+
+  const intexDeviceObj = useMemo(
+    () => devices?.outputs.find((d) => String(d.id) === String(selected.intex_id)) ?? null,
+    [devices, selected.intex_id]
+  );
+  const intexIsWireless = useMemo(() => isWirelessName(intexDeviceObj?.name), [intexDeviceObj]);
+
+  const switchIntexMode = useCallback(
+    async (mode: "wired" | "bt") => {
+      const outs = devices?.outputs ?? [];
+      const laptopDev = outs.find((d) => d.name.toLowerCase().includes("speakers (realtek"));
+      const targetDev =
+        mode === "wired"
+          ? outs.find((d) => d.name.toLowerCase().includes("headphones (realtek"))
+          : outs.find((d) => d.name.toLowerCase().includes("3.0 bt")) ??
+            outs.find((d) => {
+              const nl = d.name.toLowerCase();
+              return (
+                isWirelessName(nl) &&
+                !nl.includes("hands-free") &&
+                !nl.includes("ag audio") &&
+                !nl.includes("realtek")
+              );
+            });
+
+      if (!targetDev) {
+        showToast(
+          mode === "wired"
+            ? "Plug in 3.5mm AUX cable & click Refresh"
+            : "Connect a Bluetooth speaker in Windows first",
+          "warn"
+        );
+        return;
+      }
+
+      const next = {
+        ...selected,
+        intex_id: String(targetDev.id),
+        boat_id: "",
+        laptop_id: laptopDev ? String(laptopDev.id) : selected.laptop_id,
+      };
+      setThirdSpeakerManual(false);
+      setSelected(next);
+      try {
+        const res = await mixerApi.setDevices(next);
+        const btDelay = Math.round(res.mixer.calibrated_delay_ms ?? 224);
+        const delayPatch =
+          mode === "wired"
+            ? { intex_delay_ms: 0, laptop_delay_ms: 0 }
+            : { intex_delay_ms: 0, laptop_delay_ms: btDelay };
+        const updated = await mixerApi.updateMixer(delayPatch);
+        applyFullPayload({ ...res, mixer: updated.mixer }, true);
+        showToast(
+          mode === "wired"
+            ? "Wired 4.2 AUX active (0 ms zero-lag)"
+            : `Bluetooth 4.2 active (${btDelay} ms sync)`,
+          "success"
+        );
+      } catch {
+        showToast("Could not switch speaker mode", "warn");
+      }
+    },
+    [devices, selected, applyFullPayload, showToast]
+  );
+
+  const toggleThirdSpeaker = useCallback(async () => {
+    if (showThirdSpeaker) {
+      setThirdSpeakerManual(false);
+      if (expandedRole === "boat") setExpandedRole(null);
+      if (selected.boat_id) {
+        await handleDeviceChange("boat_id", "");
+      }
+    } else {
+      setThirdSpeakerManual(true);
+    }
+  }, [showThirdSpeaker, expandedRole, selected.boat_id, handleDeviceChange]);
 
   const onIntexDev = useCallback((v: string) => void handleDeviceChange("intex_id", v), [handleDeviceChange]);
   const onBoatDev = useCallback((v: string) => void handleDeviceChange("boat_id", v), [handleDeviceChange]);
@@ -558,7 +665,7 @@ export function App() {
     if (calibrating) return;
     setCalibrating(true);
     setCalError(false);
-    setCalStatus("Playing 2 BT + AUX chirp pairs... keep room quiet (~3 s)");
+    setCalStatus("Playing 2 BT + Wired chirp pairs... keep room quiet (~3 s)");
     try {
       const res = await mixerApi.calibrateSyncDelay();
       applyFullPayload(res.status, true);
@@ -617,7 +724,7 @@ export function App() {
       const st = await mixerApi.resetFactory();
       applyFullPayload(st, true);
       setCalError(false);
-      setCalStatus("Restored factory defaults (224 ms sync)");
+      setCalStatus("Restored factory 4.2 defaults (Desk Full Range)");
       showToast("Factory defaults restored", "info");
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Reset failed";
@@ -653,7 +760,7 @@ export function App() {
     (r: Role) => {
       const next = mixer.solo === r ? null : r;
       patchMixer({ solo: next });
-      const label = r === "intex" ? "Primary 2.1" : r === "boat" ? "Center Wireless" : "Built-in";
+      const label = r === "intex" ? "Primary 2.2" : r === "boat" ? "Auxiliary Speaker" : "Built-in Speakers";
       showToast(next ? `Soloed ${label}` : "Solo cleared", "info");
     },
     [mixer.solo, patchMixer, showToast]
@@ -703,21 +810,16 @@ export function App() {
       let shortLabel = d.name;
       let tag = "OUT";
       if (nl.includes("headphones (realtek")) {
-        shortLabel = "Realtek AUX Jack";
+        shortLabel = "AUX Output (Realtek)";
         tag = "AUX";
       } else if (nl.includes("speakers (realtek")) {
-        shortLabel = "Laptop Speakers";
+        shortLabel = "Built-in Speakers";
         tag = "PC";
-      } else if (nl.includes("stone 358")) {
-        shortLabel = "boAt Stone 358 Pro";
-        tag = "BT";
-      } else if (nl.includes("3.0 bt")) {
-        shortLabel = "3.0 BT Receiver";
-        tag = "BT";
       } else if (
         nl.includes("bt") ||
         nl.includes("bluetooth") ||
         nl.includes("anc") ||
+        nl.includes("stone") ||
         nl.includes("soundcore") ||
         nl.includes("jbl") ||
         nl.includes("sony") ||
@@ -732,6 +834,8 @@ export function App() {
         nl.includes("wf-") ||
         nl.includes("qc")
       ) {
+        const parenMatch = d.name.match(/^Headphones\s*\((.+)\)$/i);
+        shortLabel = parenMatch ? parenMatch[1].trim() : d.name;
         tag = "BT";
       } else if (nl.includes("usb") || nl.includes("dac") || nl.includes("focusrite") || nl.includes("scarlett")) {
         tag = "USB";
@@ -750,6 +854,16 @@ export function App() {
     return nl.includes("steam streaming") || nl.includes("cable") || nl.includes("voicemeeter");
   }, [devices, selected.input_id]);
 
+  const selectedVirtualInputLabel = useMemo(() => {
+    const d = devices?.inputs.find((x) => String(x.id) === String(selected.input_id));
+    if (!d) return "VB-Audio Cable";
+    const nl = d.name.toLowerCase();
+    if (nl.includes("cable")) return "CABLE Input (VB-Audio Virtual Cable)";
+    if (nl.includes("steam streaming")) return "Steam Streaming Speakers";
+    if (nl.includes("voicemeeter")) return "Voicemeeter Input";
+    return d.name.replace(" [Loopback]", "");
+  }, [devices, selected.input_id]);
+
   const showDefaultOutputGuard =
     isVirtualInputSelected &&
     devices?.default_output_is_virtual === false &&
@@ -759,28 +873,34 @@ export function App() {
     ? Math.min(mixer.master_vol, mixer.protection_max_master)
     : mixer.master_vol;
   const masterMax = mixer.protection_enabled ? mixer.protection_max_master : 200;
-  const anyMuted = mixer.master_mute || mixer.intex_mute || mixer.boat_mute || mixer.laptop_mute;
+  const anyMuted =
+    mixer.master_mute ||
+    mixer.intex_mute ||
+    mixer.laptop_mute ||
+    (showThirdSpeaker && mixer.boat_mute);
 
+  const activeSyncMs = Math.max(mixer.intex_delay_ms, mixer.laptop_delay_ms);
   const flapText = useMemo(() => {
     if (anyMuted) return "MUTED";
     if (!running) return "PAUSED";
+    const modeTag = intexIsWireless ? "BT4.2" : "4.2";
     const badge = POSITION_PRESETS.find((p) => p.id === mixer.position_preset)?.badge ?? "CUSTOM";
-    return `${badge} +${mixer.intex_delay_ms}MS`;
-  }, [anyMuted, running, mixer.position_preset, mixer.intex_delay_ms]);
+    return activeSyncMs > 0 ? `${modeTag} +${activeSyncMs}MS` : `${modeTag} ${badge}`;
+  }, [anyMuted, running, intexIsWireless, mixer.position_preset, activeSyncMs]);
 
   return (
     <WarmTooltipGroup delay={260} warmWindow={450}>
-      <div className="relative flex min-h-screen items-center justify-center bg-[#0f1014] px-4 py-2.5 text-zinc-100 sm:px-6 sm:py-3 lg:px-8">
+      <div className="relative flex min-h-screen flex-col justify-center bg-[#0f1014] px-3 py-2.5 text-zinc-100 sm:px-5 sm:py-3.5 lg:px-7">
         {/* Centered Full-Width Studio Container */}
         <motion.div
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
-          className={`relative z-10 w-full transition-[max-width] duration-300 ${
+          className={`relative z-10 mx-auto w-full transition-[max-width] duration-300 ${
             compactMode ? "max-w-[820px]" : "max-w-[1720px]"
           }`}
         >
-          <div className="relative overflow-visible rounded-3xl border border-white/[0.07] bg-[#16171b]/95 p-4 shadow-[0_28px_80px_rgba(0,0,0,0.72)] sm:p-5">
+          <div className="relative overflow-visible rounded-3xl border border-white/[0.07] bg-[#16171b]/95 p-3.5 shadow-[0_28px_80px_rgba(0,0,0,0.72)] sm:p-5">
             {/* Top Smoked Aurora Wave */}
             {perfMode !== "eco" && (
               <div className="pointer-events-none absolute inset-x-0 top-0 h-32 overflow-hidden rounded-t-3xl opacity-45">
@@ -812,10 +932,10 @@ export function App() {
                   />
                   {running ? "Active" : "Paused"}
                 </span>
-                <div className="hidden opacity-90 sm:block">
+                <div className="hidden opacity-90 lg:block">
                   <SplitFlapText
                     text={flapText}
-                    padTo={15}
+                    padTo={13}
                     fontSize={13}
                     tileColor="#1e2026"
                     textColor="#e4e4e7"
@@ -974,7 +1094,7 @@ export function App() {
                   <div className="flex items-center justify-between gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3.5 py-2 text-xs text-amber-200">
                     <span className="flex items-center gap-2">
                       <ShieldWarning size={15} className="shrink-0 text-amber-400" />
-                      Windows playback switched to &ldquo;{devices?.default_output_name}&rdquo; — set Steam Streaming Speakers as default output for audio capture.
+                      Windows playback switched to &ldquo;{devices?.default_output_name}&rdquo; — set {selectedVirtualInputLabel} as default output for audio capture.
                     </span>
                     <button
                       type="button"
@@ -1037,12 +1157,12 @@ export function App() {
             )}
 
             {/* FULL-WIDTH 12-COLUMN STUDIO GRID */}
-            <div className="grid grid-cols-1 gap-6 xl:grid-cols-12">
+            <div className="grid grid-cols-1 gap-5 xl:grid-cols-12">
               {/* LEFT 7 COLS (OR FULL IN COMPACT): SYSTEM + ACTIVE SPEAKERS */}
-              <div className={`flex flex-col gap-4 ${compactMode ? "xl:col-span-12" : "xl:col-span-7"}`}>
+              <div className={`flex min-w-0 flex-col gap-4 ${compactMode ? "xl:col-span-12" : "xl:col-span-7"}`}>
                 {/* SYSTEM SECTION */}
                 <section>
-                  <div className="mb-2 flex items-center justify-between px-1">
+                  <div className="mb-2 flex flex-wrap items-center justify-between gap-2 px-1">
                     <h2 className="text-xs font-medium text-zinc-400">System</h2>
                     <LiveProtectionSummary
                       enabled={mixer.protection_enabled}
@@ -1053,9 +1173,9 @@ export function App() {
 
                   <div className="flex flex-col gap-2">
                     {/* Output (Master Bus) */}
-                    <div className="relative z-30 rounded-2xl border border-white/[0.06] bg-[#1c1e24]">
-                      <div className="flex flex-wrap items-center gap-3 px-4 py-2.5 sm:flex-nowrap">
-                        <div className="flex min-w-[145px] items-center gap-2.5">
+                    <div className="@container relative z-30 rounded-2xl border border-white/[0.06] bg-[#1c1e24]">
+                      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 px-3.5 py-2.5 @[600px]:flex-nowrap sm:px-4">
+                        <div className="flex min-w-0 flex-1 items-center gap-2.5 @[600px]:w-[162px] @[600px]:flex-none @[720px]:w-[180px]">
                           <WarmTooltip
                             content={mixer.master_mute ? "Unmute Master Output" : "Mute Master Output"}
                             side="right"
@@ -1071,33 +1191,62 @@ export function App() {
                               />
                             </div>
                           </WarmTooltip>
-                          <div>
-                            <div className="text-[13.5px] font-medium text-zinc-100">Output</div>
-                            <div className="text-[11px] text-zinc-500">Master Bus</div>
+                          <div className="min-w-0">
+                            <div className="truncate text-[13px] font-medium text-zinc-100">Output</div>
+                            <div className="truncate text-[11px] text-zinc-500">Master Bus</div>
                           </div>
                         </div>
 
-                        <div className="min-w-[160px] flex-1">
-                          <PillVolumeSlider
-                            value={effectiveMaster}
-                            min={0}
-                            max={masterMax}
-                            muted={mixer.master_mute}
-                            ariaLabel="Master Output Volume"
-                            onChange={(v) => patchMixer({ master_vol: v })}
-                            onToggleMute={() => patchMixer({ master_mute: !mixer.master_mute })}
-                            onUnmute={() => patchMixer({ master_mute: false })}
-                          />
+                        <div className="order-3 flex w-full items-center gap-2.5 @[600px]:order-2 @[600px]:min-w-[115px] @[600px]:w-auto @[600px]:flex-1">
+                          <div className="min-w-0 flex-1">
+                            <PillVolumeSlider
+                              value={effectiveMaster}
+                              min={0}
+                              max={masterMax}
+                              muted={mixer.master_mute}
+                              ariaLabel="Master Output Volume"
+                              onChange={(v) => patchMixer({ master_vol: v })}
+                              onToggleMute={() => patchMixer({ master_mute: !mixer.master_mute })}
+                              onUnmute={() => patchMixer({ master_mute: false })}
+                            />
+                          </div>
+                          <div className="flex shrink-0 items-center gap-2">
+                            <span className="w-9 text-right font-mono text-xs text-zinc-400 tabular-nums">
+                              {effectiveMaster}%
+                            </span>
+                            <LiveLedMeter channel="master" muted={mixer.master_mute} />
+                          </div>
                         </div>
 
-                        <div className="flex items-center gap-2.5">
-                          <span className="w-10 text-right font-mono text-xs text-zinc-400 tabular-nums">
-                            {effectiveMaster}%
-                          </span>
-                          <LiveLedMeter channel="master" muted={mixer.master_mute} />
-                        </div>
+                        <div className="order-2 flex shrink-0 items-center gap-2 @[600px]:order-3">
+                          <div className="w-[155px] @[420px]:w-[185px] @[720px]:w-[210px]">
+                            <WarmTooltip
+                              content="Volume protection & sync calibration"
+                              surfaceColor="#242730"
+                              inkColor="#f4f5f7"
+                              size="sm"
+                            >
+                              <button
+                                type="button"
+                                onClick={() => setSystemDrawerOpen((v) => !v)}
+                                className="flex h-8 w-full items-center justify-between rounded-lg bg-[#272930] px-2.5 text-xs font-medium text-zinc-200 transition hover:bg-[#31343d]"
+                              >
+                                <span className="flex items-center gap-1.5 truncate">
+                                  {mixer.protection_enabled ? (
+                                    <ShieldCheck size={14} className="shrink-0 text-[#22c55e]" />
+                                  ) : (
+                                    <ShieldWarning size={14} className="shrink-0 text-amber-400" />
+                                  )}
+                                  <span className="truncate">
+                                    {mixer.protection_enabled
+                                      ? `Guard ${mixer.protection_max_master}% • ${mixer.protection_ceiling_db}dB`
+                                      : "Guard Off (200% Max)"}
+                                  </span>
+                                </span>
+                              </button>
+                            </WarmTooltip>
+                          </div>
 
-                        <div className="w-full sm:w-[215px]">
                           <WarmTooltip
                             content="Volume protection & sync calibration"
                             surfaceColor="#242730"
@@ -1107,40 +1256,16 @@ export function App() {
                             <button
                               type="button"
                               onClick={() => setSystemDrawerOpen((v) => !v)}
-                              className="flex h-8 w-full items-center justify-between rounded-lg bg-[#272930] px-2.5 text-xs font-medium text-zinc-200 transition hover:bg-[#31343d]"
+                              className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg transition ${
+                                systemDrawerOpen
+                                  ? "bg-white/10 text-white"
+                                  : "text-zinc-500 hover:bg-white/[0.06] hover:text-zinc-200"
+                              }`}
                             >
-                              <span className="flex items-center gap-1.5 truncate">
-                                {mixer.protection_enabled ? (
-                                  <ShieldCheck size={14} className="text-[#22c55e]" />
-                                ) : (
-                                  <ShieldWarning size={14} className="text-amber-400" />
-                                )}
-                                {mixer.protection_enabled
-                                  ? `Guard ${mixer.protection_max_master}% • ${mixer.protection_ceiling_db}dB`
-                                  : "Guard Off (200% Max)"}
-                              </span>
+                              {systemDrawerOpen ? <X size={15} weight="bold" /> : <SlidersHorizontal size={16} />}
                             </button>
                           </WarmTooltip>
                         </div>
-
-                        <WarmTooltip
-                          content="Volume protection & sync calibration"
-                          surfaceColor="#242730"
-                          inkColor="#f4f5f7"
-                          size="sm"
-                        >
-                          <button
-                            type="button"
-                            onClick={() => setSystemDrawerOpen((v) => !v)}
-                            className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg transition ${
-                              systemDrawerOpen
-                                ? "bg-white/10 text-white"
-                                : "text-zinc-500 hover:bg-white/[0.06] hover:text-zinc-200"
-                            }`}
-                          >
-                            {systemDrawerOpen ? <X size={15} weight="bold" /> : <SlidersHorizontal size={16} />}
-                          </button>
-                        </WarmTooltip>
                       </div>
 
                       <SmoothCollapse open={systemDrawerOpen}>
@@ -1169,119 +1294,175 @@ export function App() {
                     </div>
 
                     {/* Input (System Loopback) */}
-                    <div className="relative z-20 flex flex-wrap items-center gap-3 rounded-2xl border border-white/[0.06] bg-[#1c1e24] px-4 py-2.5 sm:flex-nowrap">
-                      <div className="flex min-w-[145px] items-center gap-2.5">
-                        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white/[0.07] text-zinc-300">
-                          <Record size={17} />
+                    <div className="@container relative z-20 rounded-2xl border border-white/[0.06] bg-[#1c1e24]">
+                      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 px-3.5 py-2.5 @[600px]:flex-nowrap sm:px-4">
+                        <div className="flex min-w-0 flex-1 items-center gap-2.5 @[600px]:w-[162px] @[600px]:flex-none @[720px]:w-[180px]">
+                          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white/[0.07] text-zinc-300">
+                            <Record size={17} />
+                          </div>
+                          <div className="min-w-0">
+                            <div className="truncate text-[13px] font-medium text-zinc-100">Input</div>
+                            <div className="truncate text-[11px] text-zinc-500">System Loopback</div>
+                          </div>
                         </div>
-                        <div>
-                          <div className="text-[13.5px] font-medium text-zinc-100">Input</div>
-                          <div className="text-[11px] text-zinc-500">System Loopback</div>
+
+                        <div className="order-3 flex w-full items-center gap-2.5 @[600px]:order-2 @[600px]:min-w-[115px] @[600px]:w-auto @[600px]:flex-1">
+                          <div className="min-w-0 flex-1">
+                            <PillVolumeSlider
+                              value={winVols.input ? Math.round(winVols.input.volume_pct) : 98}
+                              min={0}
+                              max={100}
+                              muted={Boolean(winVols.input?.mute)}
+                              disabled
+                              ariaLabel="Capture Loopback Unity"
+                              onChange={() => {}}
+                            />
+                          </div>
+                          <div className="flex shrink-0 items-center gap-2">
+                            <span className="w-9 text-right font-mono text-xs text-zinc-400 tabular-nums">
+                              {winVols.input ? `${Math.round(winVols.input.volume_pct)}%` : "98%"}
+                            </span>
+                            <LiveLedMeter channel="in" />
+                          </div>
                         </div>
-                      </div>
 
-                      <div className="min-w-[160px] flex-1">
-                        <PillVolumeSlider
-                          value={winVols.input ? Math.round(winVols.input.volume_pct) : 98}
-                          min={0}
-                          max={100}
-                          muted={Boolean(winVols.input?.mute)}
-                          disabled
-                          ariaLabel="Capture Loopback Unity"
-                          onChange={() => {}}
-                        />
-                      </div>
+                        <div className="order-2 flex shrink-0 items-center gap-2 @[600px]:order-3">
+                          <div className="w-[155px] @[420px]:w-[185px] @[720px]:w-[210px]">
+                            <GlideSelect
+                              options={inputOptions}
+                              value={selected.input_id}
+                              size="md"
+                              menuWidth={240}
+                              align="right"
+                              accentColor="#ffffff"
+                              surfaceColor="#272930"
+                              highlightColor="#353842"
+                              textColor="#eceef2"
+                              className="w-full [&>button]:w-full [&>button]:justify-between"
+                              onChange={(v) => void handleDeviceChange("input_id", v)}
+                            />
+                          </div>
 
-                      <div className="flex items-center gap-2.5">
-                        <span className="w-10 text-right font-mono text-xs text-zinc-400 tabular-nums">
-                          {winVols.input ? `${Math.round(winVols.input.volume_pct)}%` : "98%"}
-                        </span>
-                        <LiveLedMeter channel="in" />
-                      </div>
-
-                      <div className="w-full sm:w-[215px]">
-                        <GlideSelect
-                          options={inputOptions}
-                          value={selected.input_id}
-                          size="md"
-                          menuWidth={240}
-                          align="right"
-                          accentColor="#ffffff"
-                          surfaceColor="#272930"
-                          highlightColor="#353842"
-                          textColor="#eceef2"
-                          className="w-full [&>button]:w-full [&>button]:justify-between"
-                          onChange={(v) => void handleDeviceChange("input_id", v)}
-                        />
-                      </div>
-
-                      <div className="flex h-8 w-8 shrink-0 items-center justify-center text-zinc-600">
-                        <SlidersHorizontal size={16} />
+                          <div className="flex h-8 w-8 shrink-0 items-center justify-center text-zinc-600">
+                            <SlidersHorizontal size={16} />
+                          </div>
+                        </div>
                       </div>
                     </div>
                   </div>
                 </section>
 
-                {/* ACTIVE SPEAKERS SECTION */}
+                {/* ACTIVE SPEAKERS SECTION (4.2 HYBRID: INTEX IT-3000 2.2 + LAPTOP 2.0) */}
                 <section>
                   <div className="mb-2 flex flex-wrap items-center justify-between gap-2 px-1">
-                    <h2 className="text-xs font-medium text-zinc-400">Active speakers</h2>
-                    <div className="flex items-center gap-2.5">
+                    <div className="flex items-center gap-2">
+                      <h2 className="text-xs font-medium text-zinc-400">
+                        Active speakers
+                      </h2>
+                      <span className="rounded-md border border-white/[0.08] bg-white/[0.04] px-1.5 py-0.5 font-mono text-[10px] text-zinc-300">
+                        {showThirdSpeaker ? "5.2" : "4.2"}
+                      </span>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {/* Quick Wired AUX vs Bluetooth 4.2 Mode Switcher */}
+                      <div className="inline-flex items-center rounded-lg border border-white/[0.07] bg-[#141519] p-0.5">
+                        <WarmTooltip
+                          content="Mode 1: Wired AUX Primary + Built-in Speakers (0 ms zero-lag 4.2)"
+                          surfaceColor="#242730"
+                          inkColor="#f4f5f7"
+                          size="sm"
+                        >
+                          <button
+                            type="button"
+                            onClick={() => void switchIntexMode("wired")}
+                            className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[10.5px] font-medium transition ${
+                              !intexIsWireless && Boolean(selected.intex_id)
+                                ? "bg-emerald-500/20 text-emerald-200 shadow-xs"
+                                : "text-zinc-400 hover:text-zinc-200"
+                            }`}
+                          >
+                            <Plugs size={11} />
+                            Wired AUX
+                          </button>
+                        </WarmTooltip>
+
+                        <WarmTooltip
+                          content="Mode 2: Bluetooth Primary + Built-in Speakers (phase-locked 4.2)"
+                          surfaceColor="#242730"
+                          inkColor="#f4f5f7"
+                          size="sm"
+                        >
+                          <button
+                            type="button"
+                            onClick={() => void switchIntexMode("bt")}
+                            className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[10.5px] font-medium transition ${
+                              intexIsWireless
+                                ? "bg-sky-500/20 text-sky-200 shadow-xs"
+                                : "text-zinc-400 hover:text-zinc-200"
+                            }`}
+                          >
+                            <Bluetooth size={11} />
+                            Bluetooth
+                          </button>
+                        </WarmTooltip>
+                      </div>
+
+                      {showThirdSpeaker && (
+                        <WarmTooltip
+                          content="Mirror Primary sync delay onto Laptop speakers automatically"
+                          surfaceColor="#242730"
+                          inkColor="#f4f5f7"
+                          size="sm"
+                        >
+                          <button
+                            type="button"
+                            onClick={toggleDelayLink}
+                            className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[10.5px] font-medium transition ${
+                              delayLinked
+                                ? "border-emerald-500/35 bg-emerald-500/15 text-emerald-300"
+                                : "border-white/[0.08] bg-[#202228] text-zinc-400 hover:text-zinc-200"
+                            }`}
+                          >
+                            {delayLinked ? <LinkSimple size={12} /> : <LinkBreak size={12} />}
+                            {delayLinked ? `Linked (${mixer.intex_delay_ms} ms)` : "Unlinked"}
+                          </button>
+                        </WarmTooltip>
+                      )}
+
                       <WarmTooltip
-                        content="Mirror AUX sync delay onto Built-in speakers automatically"
+                        content={showThirdSpeaker ? "Hide optional 3rd speaker (return to clean 4.2 view)" : "Optionally add a 3rd speaker channel"}
                         surfaceColor="#242730"
                         inkColor="#f4f5f7"
                         size="sm"
                       >
                         <button
                           type="button"
-                          onClick={toggleDelayLink}
-                          className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[10.5px] font-medium transition ${
-                            delayLinked
-                              ? "border-emerald-500/35 bg-emerald-500/15 text-emerald-300"
-                              : "border-white/[0.08] bg-[#202228] text-zinc-400 hover:text-zinc-200"
-                          }`}
+                          onClick={() => void toggleThirdSpeaker()}
+                          className="inline-flex items-center gap-1 rounded-md border border-white/[0.07] bg-[#202228] px-2 py-0.5 text-[10.5px] font-medium text-zinc-400 transition hover:bg-[#2a2d35] hover:text-zinc-200"
                         >
-                          {delayLinked ? <LinkSimple size={12} /> : <LinkBreak size={12} />}
-                          {delayLinked ? `AUX+PC Linked (${mixer.intex_delay_ms} ms)` : "Delays Unlinked"}
+                          {showThirdSpeaker ? <X size={10} /> : <Plus size={10} />}
+                          {showThirdSpeaker ? "Hide 3rd" : "3rd"}
                         </button>
                       </WarmTooltip>
-                      <span className="hidden text-[11px] text-zinc-500 sm:inline">
-                        Click sliders icon for EQ &amp; Delay
-                      </span>
                     </div>
                   </div>
 
                   <div className="flex flex-col gap-2">
                     <SpeakerRow
                       role="intex"
-                      name="Primary 2.1 / AUX"
-                      sublabel="Wired • L/R + Subs"
-                      icon={<SpeakerHigh size={17} />}
+                      name="Primary 2.2"
+                      sublabel={intexIsWireless ? "Bluetooth" : "Wired · Subs"}
+                      icon={intexIsWireless ? <Bluetooth size={17} /> : <SpeakerHigh size={17} />}
                       expanded={expandedRole === "intex"}
                       onToggleExpand={toggleIntexExpand}
                       mixer={mixer}
                       selectedDeviceId={selected.intex_id}
                       outputOptions={outputOptions}
                       winVol={winVols.intex}
+                      intexIsWireless={intexIsWireless}
+                      showThirdSpeaker={showThirdSpeaker}
                       onDeviceChange={onIntexDev}
-                      onPatch={patchMixer}
-                      onSetWinVol={handleSetWinVol}
-                      onPinWinVol={handlePinWinVol}
-                    />
-
-                    <SpeakerRow
-                      role="boat"
-                      name="Center / Wireless"
-                      sublabel="Bluetooth • Focal Driver"
-                      icon={<Bluetooth size={17} />}
-                      expanded={expandedRole === "boat"}
-                      onToggleExpand={toggleBoatExpand}
-                      mixer={mixer}
-                      selectedDeviceId={selected.boat_id}
-                      outputOptions={outputOptions}
-                      winVol={winVols.boat}
-                      onDeviceChange={onBoatDev}
                       onPatch={patchMixer}
                       onSetWinVol={handleSetWinVol}
                       onPinWinVol={handlePinWinVol}
@@ -1290,7 +1471,7 @@ export function App() {
                     <SpeakerRow
                       role="laptop"
                       name="Built-in Speakers"
-                      sublabel="Internal • Desk Tweeters"
+                      sublabel="Near-Field · 2.0"
                       icon={<Laptop size={17} />}
                       expanded={expandedRole === "laptop"}
                       onToggleExpand={toggleLaptopExpand}
@@ -1298,21 +1479,46 @@ export function App() {
                       selectedDeviceId={selected.laptop_id}
                       outputOptions={outputOptions}
                       winVol={winVols.laptop}
+                      intexIsWireless={intexIsWireless}
+                      showThirdSpeaker={showThirdSpeaker}
                       onDeviceChange={onLaptopDev}
                       onPatch={patchMixer}
                       onSetWinVol={handleSetWinVol}
                       onPinWinVol={handlePinWinVol}
                     />
+
+                    {showThirdSpeaker && (
+                      <SpeakerRow
+                        role="boat"
+                        name="Auxiliary Speaker"
+                        sublabel="Optional · Fill"
+                        icon={<Bluetooth size={17} />}
+                        expanded={expandedRole === "boat"}
+                        onToggleExpand={toggleBoatExpand}
+                        mixer={mixer}
+                        selectedDeviceId={selected.boat_id}
+                        outputOptions={outputOptions}
+                        winVol={winVols.boat}
+                        intexIsWireless={intexIsWireless}
+                        showThirdSpeaker={showThirdSpeaker}
+                        onDeviceChange={onBoatDev}
+                        onPatch={patchMixer}
+                        onSetWinVol={handleSetWinVol}
+                        onPinWinVol={handlePinWinVol}
+                      />
+                    )}
                   </div>
                 </section>
               </div>
 
               {/* RIGHT 5 COLS: 3D SOUNDSTAGE + POSITION PRESETS */}
               {!compactMode && (
-                <div className="flex flex-col gap-4 xl:col-span-5">
+                <div className="flex min-w-0 flex-col gap-4 xl:col-span-5">
                   <section className="flex h-full flex-col">
-                    <div className="mb-2 flex items-center justify-between px-1">
-                      <h2 className="text-xs font-medium text-zinc-400">3D Soundstage &amp; Position Presets</h2>
+                    <div className="mb-2 flex items-center justify-between gap-2 px-1">
+                      <h2 className="truncate text-xs font-medium text-zinc-400">
+                        {showThirdSpeaker ? "5.2 Soundstage & Presets" : "4.2 Soundstage & Presets"}
+                      </h2>
                       <WarmTooltip
                         content="Toggle live 3D room soundstage visualizer"
                         surfaceColor="#242730"
@@ -1322,7 +1528,7 @@ export function App() {
                         <button
                           type="button"
                           onClick={() => setStageOpen((v) => !v)}
-                          className="inline-flex items-center gap-1.5 rounded-lg bg-[#22242b] px-2.5 py-1 text-[11px] font-medium text-zinc-300 transition hover:bg-[#2b2e37] hover:text-white"
+                          className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-[#22242b] px-2.5 py-1 text-[11px] font-medium text-zinc-300 transition hover:bg-[#2b2e37] hover:text-white"
                         >
                           <Cube size={13} />
                           {stageOpen ? "Hide 3D Room" : "Show 3D Room"}
@@ -1330,11 +1536,11 @@ export function App() {
                       </WarmTooltip>
                     </div>
 
-                    <div className="flex flex-1 flex-col gap-4 rounded-2xl border border-white/[0.06] bg-[#1a1c21] p-4">
+                    <div className="flex flex-1 flex-col gap-3.5 rounded-2xl border border-white/[0.06] bg-[#1a1c21] p-3.5 sm:p-4">
                       <SmoothCollapse open={stageOpen}>
                         <Suspense
                           fallback={
-                            <div className="flex h-[280px] items-center justify-center rounded-xl border border-white/[0.06] bg-[#141519] text-xs text-zinc-500 sm:h-[320px]">
+                            <div className="flex h-[240px] items-center justify-center rounded-xl border border-white/[0.06] bg-[#141519] text-xs text-zinc-500 sm:h-[280px] xl:h-[300px]">
                               Loading 3D Speaker Stage...
                             </div>
                           }
@@ -1343,12 +1549,14 @@ export function App() {
                             mixer={mixer}
                             targetFps={perfMode === "eco" ? 24 : 60}
                             paused={!stageOpen || compactMode}
+                            intexIsWireless={intexIsWireless}
+                            showThirdSpeaker={showThirdSpeaker}
                             onSoloRole={handle3dSolo}
                           />
                         </Suspense>
                       </SmoothCollapse>
 
-                      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-2">
                         {POSITION_PRESETS.map((p) => {
                           const active = mixer.position_preset === p.id;
                           return (
@@ -1356,7 +1564,7 @@ export function App() {
                               key={p.id}
                               type="button"
                               onClick={() => applyPreset(p)}
-                              className={`flex flex-col justify-between gap-1 rounded-xl border p-3 text-left transition ${
+                              className={`flex min-w-0 flex-col justify-between gap-1 rounded-xl border p-3 text-left transition ${
                                 active
                                   ? "border-white/30 bg-white/[0.09] shadow-sm"
                                   : "border-white/[0.05] bg-[#141519] hover:border-white/[0.12] hover:bg-[#1d1f26]"
@@ -1364,14 +1572,14 @@ export function App() {
                             >
                               <div className="flex w-full items-center justify-between gap-2">
                                 <span
-                                  className={`flex items-center gap-1.5 text-xs font-medium ${
+                                  className={`flex min-w-0 items-center gap-1.5 truncate text-xs font-medium ${
                                     active ? "text-white" : "text-zinc-200"
                                   }`}
                                 >
-                                  {presetIcon(p.id)}
-                                  {p.name}
+                                  <span className="shrink-0">{presetIcon(p.id)}</span>
+                                  <span className="truncate">{p.name}</span>
                                 </span>
-                                <span className="rounded bg-white/[0.07] px-1.5 py-0.5 font-mono text-[9px] text-zinc-400">
+                                <span className="shrink-0 rounded bg-white/[0.07] px-1.5 py-0.5 font-mono text-[9px] text-zinc-400">
                                   {p.badge}
                                 </span>
                               </div>
@@ -1386,7 +1594,7 @@ export function App() {
               )}
             </div>
 
-            <LiveTelemetryFooter />
+            <LiveTelemetryFooter showThirdSpeaker={showThirdSpeaker} />
           </div>
         </motion.div>
 

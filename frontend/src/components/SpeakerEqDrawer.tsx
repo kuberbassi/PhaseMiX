@@ -14,15 +14,17 @@ interface SpeakerEqDrawerProps {
   role: Role;
   mixer: MixerState;
   winVol: WinEndpointVol | null;
+  intexIsWireless?: boolean;
+  showThirdSpeaker?: boolean;
   onPatch: (patch: Partial<MixerState>) => void;
   onSetWinVol: (role: Role, pct: number) => void;
   onPinWinVol: (role: Role, pin: boolean) => void;
 }
 
 const ROLE_MODE_OPTIONS: { value: AuxMode; label: string; tag: string }[] = [
+  { value: "stereo", label: "Full Stereo", tag: "L / R" },
   { value: "vocal_mid", label: "Vocal / Mid Focus", tag: "CENTER" },
   { value: "mono_center", label: "Mono Center", tag: "MONO" },
-  { value: "stereo", label: "Full Stereo", tag: "L / R" },
   { value: "side_ambience", label: "Side Ambience", tag: "WIDE" },
 ];
 
@@ -30,6 +32,8 @@ export const SpeakerEqDrawer = memo(function SpeakerEqDrawer({
   role,
   mixer,
   winVol,
+  intexIsWireless = false,
+  showThirdSpeaker = false,
   onPatch,
   onSetWinVol,
   onPinWinVol,
@@ -47,6 +51,13 @@ export const SpeakerEqDrawer = memo(function SpeakerEqDrawer({
   const trebleDb = Number(mixer[trebleKey] ?? 0);
   const isSolo = mixer.solo === role;
   const isAux = role !== "intex";
+  const btTargetMs = Math.round(mixer.calibrated_delay_ms ?? 224);
+  const isBtEndpoint = Boolean(
+    winVol?.name && /bt|bluetooth|stone|anc|earbuds|soundcore|jbl|sony|bose|marshall|airpods/i.test(winVol.name)
+  );
+  const lowWinDb = Boolean(
+    winVol && (winVol.mute || (winVol.volume_pct < 75 && winVol.db != null && winVol.db < -8))
+  );
 
   const modeKey = `${role}_mode` as keyof MixerState;
   const hpfKey = `${role}_hpf_hz` as keyof MixerState;
@@ -60,8 +71,17 @@ export const SpeakerEqDrawer = memo(function SpeakerEqDrawer({
       [trebleKey]: 0,
     } as Partial<MixerState>);
 
+  const snapDelayTarget =
+    role === "laptop"
+      ? intexIsWireless
+        ? btTargetMs
+        : 0
+      : role === "intex"
+        ? 0
+        : 0;
+
   return (
-    <div className="rounded-b-2xl border-t border-white/[0.06] bg-[#16181d] px-4 py-3.5">
+    <div className="@container rounded-b-2xl border-t border-white/[0.06] bg-[#16181d] px-3.5 py-3.5 sm:px-4">
       {/* Top Bar */}
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2.5">
         <div className="flex flex-wrap items-center gap-3">
@@ -74,7 +94,7 @@ export const SpeakerEqDrawer = memo(function SpeakerEqDrawer({
               trackOnColor="#22c55e"
               onChange={(active) => onPatch({ [muteKey]: !active } as Partial<MixerState>)}
             />
-            <span className="text-xs font-medium text-zinc-200 whitespace-nowrap">EQ &amp; Output</span>
+            <span className="whitespace-nowrap text-xs font-medium text-zinc-200">EQ &amp; Output</span>
           </div>
 
           <div className="flex items-center gap-1.5">
@@ -99,12 +119,12 @@ export const SpeakerEqDrawer = memo(function SpeakerEqDrawer({
                 trackOnColor="#eab308"
                 onChange={(c) => onPatch({ [invertKey]: c } as Partial<MixerState>)}
               />
-              <span className="text-xs text-zinc-400 whitespace-nowrap">Phase 180°</span>
+              <span className="whitespace-nowrap text-xs text-zinc-400">Phase 180°</span>
             </div>
           )}
         </div>
 
-        <div className="flex shrink-0 items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <LiveGuardBadge role={role} />
           {isAux && (
             <GlideSelect
@@ -138,17 +158,17 @@ export const SpeakerEqDrawer = memo(function SpeakerEqDrawer({
         </div>
       </div>
 
-      {/* Main EQ + Acoustic Controls Grid */}
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
+      {/* Main EQ + Acoustic Controls Grid — Container-responsive so cards NEVER clip or collide */}
+      <div className="grid grid-cols-1 gap-3.5 @[780px]:grid-cols-12">
         {/* 3-Band EQ Knobs + Segmented LED Columns + Live Frequency Response Curve */}
-        <div className="flex flex-col justify-between gap-2 rounded-xl border border-white/[0.05] bg-[#121317] p-3.5 lg:col-span-6">
-          <div className="flex items-center justify-around gap-3">
+        <div className="flex min-w-0 flex-col justify-between gap-2 overflow-hidden rounded-xl border border-white/[0.05] bg-[#121317] p-3 @[780px]:col-span-6">
+          <div className="grid grid-cols-3 items-end justify-items-center gap-1.5 @[420px]:gap-2">
             {[
               { label: "Bass", freq: "110 Hz", val: bassDb, key: bassKey },
               { label: "Mids", freq: "1.0 kHz", val: midDb, key: midKey },
               { label: "Treble", freq: "4.5 kHz", val: trebleDb, key: trebleKey },
             ].map((band) => (
-              <div key={band.label} className="flex items-end gap-1.5">
+              <div key={band.label} className="flex min-w-0 items-end justify-center gap-1">
                 <div
                   onDoubleClick={() => onPatch({ [band.key]: 0 } as Partial<MixerState>)}
                   title="Double-click to reset 0 dB"
@@ -161,7 +181,7 @@ export const SpeakerEqDrawer = memo(function SpeakerEqDrawer({
                     step={0.5}
                     unit="dB"
                     label={band.label}
-                    size={74}
+                    size={62}
                     thickness={7}
                     speed={45}
                     cometReach={100}
@@ -171,30 +191,32 @@ export const SpeakerEqDrawer = memo(function SpeakerEqDrawer({
                   />
                   <span className="text-[11px] font-medium leading-none text-zinc-300">{band.label}</span>
                 </div>
-                <LedEqColumn label={band.freq} db={band.val} />
+                <div className="hidden @[360px]:block">
+                  <LedEqColumn label={band.freq} db={band.val} />
+                </div>
               </div>
             ))}
           </div>
-          <EqCurveChart role={role} mixer={mixer} />
+          <EqCurveChart role={role} mixer={mixer} showThirdSpeaker={showThirdSpeaker} />
         </div>
 
         {/* Delay Sync, Crossovers & Windows HW Level */}
-        <div className="flex flex-col justify-between gap-3 rounded-xl border border-white/[0.05] bg-[#121317] p-3.5 lg:col-span-6">
-          <div>
-            <div className="mb-1 flex items-center justify-between text-xs">
+        <div className="flex min-w-0 flex-col justify-between gap-3 overflow-hidden rounded-xl border border-white/[0.05] bg-[#121317] p-3 @[780px]:col-span-6">
+          <div className="min-w-0">
+            <div className="mb-1 flex flex-wrap items-center justify-between gap-1 text-xs">
               <span className="text-zinc-300">Sync Delay</span>
               <span className="font-mono text-zinc-400">
                 {delayMs} ms <LiveActualMs role={role} />
               </span>
             </div>
-            <div className="flex items-center gap-2">
-              <div className="flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="min-w-[120px] flex-1">
                 <WakeSlider
                   value={delayMs}
                   min={0}
                   max={450}
                   step={1}
-                  bars={24}
+                  bars={22}
                   height={22}
                   restHeight={5}
                   gap={3}
@@ -206,7 +228,7 @@ export const SpeakerEqDrawer = memo(function SpeakerEqDrawer({
                   onChange={(v) => onPatch({ [delayKey]: v } as Partial<MixerState>)}
                 />
               </div>
-              <div className="flex gap-1">
+              <div className="flex shrink-0 gap-1">
                 {[-2, 2].map((d) => (
                   <button
                     key={d}
@@ -219,39 +241,31 @@ export const SpeakerEqDrawer = memo(function SpeakerEqDrawer({
                     {d > 0 ? `+${d}` : d}
                   </button>
                 ))}
-                {role !== "laptop" ? (
-                  <WarmTooltip
-                    content={`Snap to ${role === "intex" ? "224 ms Bluetooth sync target" : "0 ms reference"}`}
-                    surfaceColor="#242730"
-                    inkColor="#f4f5f7"
-                    size="sm"
+                <WarmTooltip
+                  content={
+                    role === "laptop" && intexIsWireless
+                      ? `Snap Built-in delay to ${btTargetMs} ms to match Bluetooth`
+                      : "Snap to 0 ms reference"
+                  }
+                  surfaceColor="#242730"
+                  inkColor="#f4f5f7"
+                  size="sm"
+                >
+                  <button
+                    type="button"
+                    onClick={() => onPatch({ [delayKey]: snapDelayTarget } as Partial<MixerState>)}
+                    className="rounded-md bg-white/10 px-2 py-1 font-mono text-[10px] font-medium text-zinc-200 hover:bg-white/20"
                   >
-                    <button
-                      type="button"
-                      onClick={() => onPatch({ [delayKey]: role === "intex" ? 224 : 0 } as Partial<MixerState>)}
-                      className="rounded-md bg-white/10 px-2 py-1 font-mono text-[10px] font-medium text-zinc-200 hover:bg-white/20"
-                    >
-                      {role === "intex" ? "224" : "0 ms"}
-                    </button>
-                  </WarmTooltip>
-                ) : (
-                  <WarmTooltip content="Copy Primary ms delay to Built-in speakers" surfaceColor="#242730" inkColor="#f4f5f7" size="sm">
-                    <button
-                      type="button"
-                      onClick={() => onPatch({ laptop_delay_ms: mixer.intex_delay_ms })}
-                      className="rounded-md bg-white/10 px-2 py-1 text-[10px] font-medium text-zinc-200 hover:bg-white/20"
-                    >
-                      Sync Main
-                    </button>
-                  </WarmTooltip>
-                )}
+                    {snapDelayTarget > 0 ? `${snapDelayTarget}` : "0 ms"}
+                  </button>
+                </WarmTooltip>
               </div>
             </div>
           </div>
 
           {role === "intex" ? (
-            <div className="grid grid-cols-2 gap-3">
-              <div>
+            <div className="grid grid-cols-1 gap-3 @[340px]:grid-cols-2">
+              <div className="min-w-0">
                 <div className="mb-1 flex justify-between text-[11px] text-zinc-400">
                   <span>Stereo Width</span>
                   <span className="font-mono">{mixer.intex_width}%</span>
@@ -272,7 +286,7 @@ export const SpeakerEqDrawer = memo(function SpeakerEqDrawer({
                   onChange={(v) => onPatch({ intex_width: v })}
                 />
               </div>
-              <div>
+              <div className="min-w-0">
                 <div className="mb-1 flex justify-between text-[11px] text-zinc-400">
                   <span>Balance</span>
                   <span className="font-mono">
@@ -301,14 +315,14 @@ export const SpeakerEqDrawer = memo(function SpeakerEqDrawer({
               </div>
             </div>
           ) : (
-            <div className="grid grid-cols-2 gap-3">
-              <div>
+            <div className="grid grid-cols-1 gap-3 @[340px]:grid-cols-2">
+              <div className="min-w-0">
                 <div className="mb-1 flex justify-between text-[11px] text-zinc-400">
                   <span>High-Pass</span>
                   <span className="font-mono">{Number(mixer[hpfKey]) <= 20 ? "Off" : `${mixer[hpfKey]} Hz`}</span>
                 </div>
                 <WakeSlider
-                  value={Number(mixer[hpfKey] ?? 160)}
+                  value={Number(mixer[hpfKey] ?? 210)}
                   min={0}
                   max={500}
                   step={10}
@@ -323,7 +337,7 @@ export const SpeakerEqDrawer = memo(function SpeakerEqDrawer({
                   onChange={(v) => onPatch({ [hpfKey]: v } as Partial<MixerState>)}
                 />
               </div>
-              <div>
+              <div className="min-w-0">
                 <div className="mb-1 flex justify-between text-[11px] text-zinc-400">
                   <span>High-Cut</span>
                   <span className="font-mono">
@@ -349,8 +363,8 @@ export const SpeakerEqDrawer = memo(function SpeakerEqDrawer({
             </div>
           )}
 
-          <div>
-            <div className="mb-1 flex items-center justify-between gap-2 text-[11px] text-zinc-400">
+          <div className="min-w-0">
+            <div className="mb-1 flex flex-wrap items-center justify-between gap-1.5 text-[11px] text-zinc-400">
               <div className="flex items-center gap-1.5">
                 <span>Windows Device Level</span>
                 {winVol && winVol.name && (
@@ -382,43 +396,52 @@ export const SpeakerEqDrawer = memo(function SpeakerEqDrawer({
               </div>
               <span
                 className={`font-mono tabular-nums ${
-                  winVol && winVol.volume_pct > 65 ? "text-amber-300" : ""
+                  lowWinDb ? "text-amber-300" : isBtEndpoint && winVol && winVol.volume_pct >= 85 ? "text-emerald-300" : ""
                 }`}
               >
                 {winVol ? `${winVol.volume_pct}%${winVol.db != null ? ` (${winVol.db} dB)` : ""}` : "--"}
               </span>
             </div>
-            <div className="flex items-center gap-2">
-              <div className="flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="min-w-[110px] flex-1">
                 <WakeSlider
-                  value={Math.min(100, winVol ? Math.round(winVol.volume_pct) : 15)}
+                  value={Math.min(100, winVol ? Math.round(winVol.volume_pct) : 80)}
                   min={0}
                   max={100}
                   step={1}
-                  bars={28}
+                  bars={24}
                   height={20}
                   restHeight={5}
                   gap={3}
                   glide={0.08}
                   smoothing={35}
-                  fillColor="#d4d4d8"
+                  fillColor={lowWinDb ? "#fbbf24" : "#d4d4d8"}
                   trackColor="#2a2c32"
                   onChange={(v) => onSetWinVol(role, v)}
                 />
               </div>
-              <div className="flex gap-1">
-                {[15, 35, 50, 100].map((pct) => (
+              <div className="flex shrink-0 gap-1">
+                {[35, 65, 85, 100].map((pct) => (
                   <button
                     key={pct}
                     type="button"
                     onClick={() => onSetWinVol(role, pct)}
-                    className="rounded-md bg-[#25272e] px-2 py-0.5 font-mono text-[10px] text-zinc-300 hover:bg-[#31343d]"
+                    className={`rounded-md px-1.5 py-0.5 font-mono text-[10px] transition ${
+                      isBtEndpoint && pct === 100 && lowWinDb
+                        ? "bg-amber-500/20 text-amber-200 ring-1 ring-amber-400/40 hover:bg-amber-500/30"
+                        : "bg-[#25272e] text-zinc-300 hover:bg-[#31343d]"
+                    }`}
                   >
                     {pct}%
                   </button>
                 ))}
               </div>
             </div>
+            {isBtEndpoint && lowWinDb && (
+              <div className="mt-1.5 text-[10.5px] leading-snug text-amber-300/90">
+                Windows BT uses a steep -130 dB taper — keep this at 85–100% and control loudness with Master Bus.
+              </div>
+            )}
           </div>
         </div>
       </div>

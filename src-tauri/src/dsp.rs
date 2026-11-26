@@ -276,7 +276,7 @@ fn soft_limit_sample(v: f32) -> f32 {
     }
 }
 
-/// Windows-matched perceptual master curve (`0% = 0`, `4% = -47 dB`, `25% = -27 dB`, `100% = 0 dB`).
+/// Windows-matched perceptual master curve for wired/APO speakers (`0% = 0`, `4% = -47 dB`, `25% = -27 dB`, `100% = 0 dB`).
 #[inline]
 pub fn perceptual_master_gain(vol_pct: f64) -> f64 {
     if !vol_pct.is_finite() || vol_pct <= 0.0 {
@@ -287,6 +287,22 @@ pub fn perceptual_master_gain(vol_pct: f64) -> f64 {
         x * 10.0_f64.powf(-(1.0 - x))
     } else {
         (vol_pct / 100.0).min(2.0)
+    }
+}
+
+/// Compensated master curve for Bluetooth/wireless endpoints that lack OEM Realtek/Dolby loudness APOs.
+/// Maps `0% -> 0`, `4% -> -18.8 dB`, `15% -> -9.6 dB`, `25% -> -6.1 dB`, `60% -> 0.0 dB` (full drive),
+/// continuing smoothly up to `2.0` (`+6 dB`) above 60%. Keeps BT loudness matched to wired/laptop speakers
+/// across the entire Master Bus range instead of needing 60% Master just to reach 5% BT volume.
+#[inline]
+pub fn wireless_master_gain(vol_pct: f64) -> f64 {
+    if !vol_pct.is_finite() || vol_pct <= 0.0 {
+        return 0.0;
+    }
+    if vol_pct <= 60.0 {
+        (vol_pct / 60.0).powf(0.80)
+    } else {
+        (1.0 + ((vol_pct - 60.0) / 40.0) * 0.45).min(2.0)
     }
 }
 
@@ -426,6 +442,7 @@ impl PeakGuard {
 pub struct PrimaryParams {
     pub master_vol: f64,
     pub vol: f64,
+    pub is_wireless: bool,
     pub width_pct: f64,
     pub balance: f64,
     pub bass_db: f64,
@@ -465,7 +482,12 @@ impl PrimaryProcessor {
         let target_gain = if p.mute {
             0.0
         } else {
-            perceptual_master_gain(p.master_vol) * perceptual_channel_gain(p.vol)
+            let m_gain = if p.is_wireless {
+                wireless_master_gain(p.master_vol)
+            } else {
+                perceptual_master_gain(p.master_vol)
+            };
+            m_gain * perceptual_channel_gain(p.vol)
         };
 
         if target_gain == 0.0 && self.prev_gain == 0.0 {
@@ -544,6 +566,7 @@ impl AuxMode {
 pub struct AuxParams {
     pub master_vol: f64,
     pub vol: f64,
+    pub is_wireless: bool,
     pub mode: AuxMode,
     pub hpf_hz: f64,
     pub lpf_hz: f64,
@@ -596,7 +619,12 @@ impl AuxChannelProcessor {
         let target_gain = if p.mute {
             0.0
         } else {
-            perceptual_master_gain(p.master_vol) * perceptual_channel_gain(p.vol)
+            let m_gain = if p.is_wireless {
+                wireless_master_gain(p.master_vol)
+            } else {
+                perceptual_master_gain(p.master_vol)
+            };
+            m_gain * perceptual_channel_gain(p.vol)
         };
 
         if target_gain == 0.0 && self.prev_gain == 0.0 {
@@ -903,6 +931,7 @@ mod tests {
         let muted_params = PrimaryParams {
             master_vol: 60.0,
             vol: 100.0,
+            is_wireless: false,
             width_pct: 120.0,
             balance: 0.0,
             bass_db: 4.0,
@@ -930,6 +959,7 @@ mod tests {
         let p = AuxParams {
             master_vol: 60.0,
             vol: 80.0,
+            is_wireless: false,
             mode: AuxMode::VocalMid,
             hpf_hz: 260.0,
             lpf_hz: 14000.0,
@@ -1050,6 +1080,21 @@ mod tests {
         assert!(perceptual_channel_gain(0.0) == 0.0);
         assert!((perceptual_channel_gain(100.0) - 1.0).abs() < 1e-6);
         assert!((perceptual_channel_gain(200.0) - 2.0).abs() < 1e-6);
+
+        // Wireless master curve: silent at 0%, reaches audible drive at 4% (~-18.8 dB), unity 1.0 at 60%, monotonic
+        assert_eq!(wireless_master_gain(0.0), 0.0);
+        let wg4 = wireless_master_gain(4.0);
+        let wg25 = wireless_master_gain(25.0);
+        let wg60 = wireless_master_gain(60.0);
+        assert!(wg4 > 0.10 && wg4 < 0.13, "wg4={wg4}");
+        assert!(wg25 > 0.45 && wg25 < 0.55, "wg25={wg25}");
+        assert!((wg60 - 1.0).abs() < 1e-6, "wg60={wg60}");
+        let mut wprev = 0.0;
+        for step in 1..=140 {
+            let wg = wireless_master_gain(step as f64);
+            assert!(wg > wprev, "wireless non-monotonic at {step}: {wg} <= {wprev}");
+            wprev = wg;
+        }
     }
 
     #[test]

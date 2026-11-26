@@ -156,27 +156,30 @@ function freqX(hz: number): number {
 }
 
 const ROLE_META: Record<Role, { label: string; color: string }> = {
-  intex: { label: "Primary AUX", color: "#34d399" },
-  boat: { label: "Center BT", color: "#60a5fa" },
-  laptop: { label: "Built-in", color: "#e4e4e7" },
+  intex: { label: "Primary 2.2", color: "#34d399" },
+  boat: { label: "Aux 3rd", color: "#60a5fa" },
+  laptop: { label: "Built-in 2.0", color: "#e4e4e7" },
 };
 
 export const EqCurveChart = memo(function EqCurveChart({
   role,
   mixer,
+  showThirdSpeaker = false,
 }: {
   role: Role;
   mixer: MixerState;
+  showThirdSpeaker?: boolean;
 }) {
   const curves = useMemo(() => {
-    const roles: Role[] = ["intex", "boat", "laptop"];
+    const roles: Role[] =
+      showThirdSpeaker || role === "boat" ? ["intex", "boat", "laptop"] : ["intex", "laptop"];
     return roles.map((r) => ({
       role: r,
       path: rolePath(buildRoleFilters(r, mixer)),
       active: r === role,
       color: ROLE_META[r].color,
     }));
-  }, [role, mixer]);
+  }, [role, mixer, showThirdSpeaker]);
 
   const inverted = role !== "intex" && Boolean(mixer[`${role}_invert` as keyof MixerState]);
   const activeColor = inverted ? "#f59e0b" : ROLE_META[role].color;

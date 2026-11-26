@@ -22,13 +22,13 @@
 flowchart LR
     WIN["Windows Audio\n(48 kHz Loopback)"] --> RING["Lockless Ring Buffer\nPer-Channel Delay (0-450 ms)"]
 
-    RING --> C1["Channel 1 · Primary 2.1 / AUX\nWidth · Balance · 3-Band EQ · PeakGuard"]
-    RING --> C2["Channel 2 · Center / Wireless\nHPF/LPF · Mono/Vocal/Side · 3-Band EQ"]
-    RING --> C3["Channel 3 · Built-In / Near-Field\nHPF/LPF · Phase 180° · 3-Band EQ"]
+    RING --> C1["Channel 1 · Primary 2.2 (Wired AUX or Bluetooth)\nWidth · Balance · BT Gain Curve · 3-Band EQ · PeakGuard"]
+    RING --> C2["Channel 2 · Built-In Speakers (Near-Field 2.0)\nHPF/LPF · Phase 180° · 3-Band EQ · PeakGuard"]
+    RING --> C3["Channel 3 · Optional Auxiliary Speaker\nHPF/LPF · Mono/Vocal/Side · 3-Band EQ"]
 
-    C1 --> OUT1["Wired Speakers"]
-    C2 --> OUT2["Bluetooth Speaker"]
-    C3 --> OUT3["Internal / Tweeters"]
+    C1 --> OUT1["Primary 2.2 (AUX / BT)"]
+    C2 --> OUT2["Built-In / Near-Field"]
+    C3 --> OUT3["Optional 3rd Speaker"]
 ```
 
 ---
@@ -37,20 +37,20 @@ flowchart LR
 
 | Feature | What It Does | Specs |
 | :--- | :--- | :--- |
-| **Phase & Delay Sync** | Delays wired/internal speakers + 2-burst mic chirp align & link | `0 – 450 ms`, `±2 ms` step, Catmull-Rom drift sync, preserved across presets |
-| **3-Band EQ + Live Curve** | Real-time 20 Hz–20 kHz curve, bass/mids/treble & crossovers per output | `110 Hz` · `1 kHz` · `4.5 kHz` (`±12 dB`), `HPF`/`LPF` |
-| **Ear-Safe Protection** | Prevents sudden system volume blasts or clipping | Master cap (`15–200%`), hold-release PeakGuard (`-6 dB` / `-15 dB`) |
-| **Interactive 3D Stage & Presets** | Width/balance/phase physics, click-to-solo, live laptop meters, compact mode | `Desk Triangle`, `Cinema 3.2`, `Wide Room`, `Night Safe`, Import/Export `.json` |
-| **Windows Integration** | Perceptual Windows curve, saved per-speaker HW levels, 1 ms lock, hot-plug BT | `1–2%` media-key steps, `70 ms` BT / `35 ms` wired slack, `IAudioEndpointVolume` |
+| **4.2 Mode Switch & Delay Sync** | One-click `Wired AUX` (`0 ms`) ↔ `Bluetooth` (`224 ms`) switch + 2-burst mic chirp align | `0 – 450 ms`, `±2 ms` step, Catmull-Rom drift sync, preserved across presets |
+| **Full-Range 3-Band EQ + Curve** | Seamless `20 Hz – 20 kHz` 4.2 crossover with real-time response curve per output | `110 Hz` · `1 kHz` · `4.5 kHz` (`±12 dB`), `HPF`/`LPF` |
+| **Ear-Safe Protection** | Prevents sudden system volume blasts or clipping | Master cap (`15–200%`), hold-release PeakGuard (`-3 dB` day / `-15 dB` night) |
+| **Responsive UI & 3D Stage** | Container-responsive console (`720×560` min), 4.2/5.2 3D physics, click-to-solo, dock mode | `Desk 4.2`, `Cinema 4.2`, `Wide Room 4.2`, `Night Safe`, `Offset 4.2`, `Pure Flat 4.2` |
+| **Windows & Bluetooth Gain Sync** | Dedicated BT master curve, session unity, saved HW levels, 1 ms timer lock, hot-plug BT | `wireless_master_gain`, `1–2%` media keys, `70 ms` BT / `35 ms` wired slack |
 
 ---
 
 ## Audio Routing Architecture
 
 - **System Loopback Capture (`48 kHz` Stereo `f32`):** PhaseMiX captures a Windows render loopback endpoint (preferring **VB-Audio CABLE Input** first, then **Steam Streaming Speakers** or **VoiceMeeter**, falling back to standard render loopback or physical inputs). Capture uses WASAPI `EventsShared` (`autoconvert: true`) with an **`80 ms`** Windows engine loopback buffer (`PollingShared` fallback in native mix format), while locking OS timer resolution to `1 ms` via `timeBeginPeriod(1)`.
-- **Central `SharedRing` Buffer & Independent Workers:** Captured blocks write into a `4`-second (`192,000`-frame) ring pre-seeded by `600 ms` with a **`125 ms`** base playback cushion plus per-speaker delay (`0–450 ms`). Each of the 3 output slots spawns a dedicated `Pro Audio` thread opening WASAPI render streams (`70 ms` shared slack for detected wireless/BT names, `35 ms` wired) with non-blocking `try_write()` telemetry and monotonic underrun handling (never rewinds backwards over already-played audio).
+- **Central `SharedRing` Buffer & Independent Workers:** Captured blocks write into a `4`-second (`192,000`-frame) ring pre-seeded by `600 ms` with a **`125 ms`** base playback cushion plus per-speaker delay (`0–450 ms`). Each active output slot spawns a dedicated `Pro Audio` thread opening WASAPI render streams (`70 ms` shared slack for detected wireless/BT endpoints, `35 ms` wired) with non-blocking `try_write()` telemetry, duplicate-endpoint prevention, and monotonic underrun handling (never rewinds backwards over already-played audio).
 - **Independent Clock-Drift Synchronization:** Separate audio hardware devices (Realtek DAC, USB/HDMI, Bluetooth A2DP) do not share a hardware clock crystal. Each output thread smooths ring-buffer offset with a `3.0 s` time-normalized EMA, ignores `< 1.5 ms` (`72`-frame) packet arrival jitter, and applies 4-point Catmull-Rom fractional resampling capped at **`±400 ppm`** (`±0.04%`) so speakers stay phase-aligned without audible pitch drift.
-- **Volume Curves, Key Bridge & Persistent Device Levels:** DSP gains use a Windows-matched perceptual master curve (`x * 10^(-(1 - x))`) and smooth `x^1.5` speaker trims (`100–200%` linear boost), paired with a hold-release `PeakGuard` (`180 ms` hold, `450 ms` release). On virtual loopback inputs, `run_win_key_bridge` polls Windows `IAudioEndpointVolume` every `20 ms`, resets endpoint scalar to `0.98`, converts media-key presses into `1%` (`< 14%`) / `2%` (`>= 14%`) Master steps, and auto-restores per-device Windows volumes (`win_device_vols`) on startup and Bluetooth reconnect.
+- **Dual Master Volume Curves, Session Unity & Persistent Device Levels:** Wired/APO outputs use a Windows-matched perceptual curve (`x * 10^(-(1 - x))`), while Bluetooth/wireless outputs automatically use a compensated `wireless_master_gain` curve (`(v / 60)^0.80`, reaching `0 dB` unity at `60%` Master) so raw A2DP streams match the loudness of Realtek/Dolby APO endpoints across the entire slider range. Every render stream enforces `ISimpleAudioVolume` unity (`100%` unmuted, defeating Windows Communications auto-ducking), auto-normalizes unpinned severely-attenuated Bluetooth endpoints (`< -6 dB`) when virtual loopback owns playback, and restores per-device Windows volumes (`win_device_vols`) across boots and reconnects. On virtual loopback inputs, `run_win_key_bridge` polls Windows `IAudioEndpointVolume` every `20 ms`, resets endpoint scalar to `0.98`, and converts media-key presses into `1%` (`< 14%`) / `2%` (`>= 14%`) Master steps.
 
 ---
 
@@ -69,19 +69,19 @@ flowchart LR
 ## Latency Calibration Method
 
 1. **Dual-Burst Acoustic Chirp Alignment (`Auto-Align Delay via Mic`):**
-   - Requires routing running with both **Primary AUX** and **Center Wireless (BT)** assigned (and powered/unmuted at the speaker hardware) plus a working Windows default microphone.
-   - After draining `160 ms` of cold mic audio, PhaseMiX injects **4 alternating `44 ms` Hann-windowed logarithmic chirps (`600 Hz -> 3.4 kHz`)** over `3.05 s` (`BT 1` at `+180 ms`, `AUX 1` at `+980 ms`, `BT 2` at `+1750 ms`, `AUX 2` at `+2550 ms`) with built-in laptop speakers muted during the sweep.
+   - Requires routing running with both your **Bluetooth Primary** and **Built-in Speakers** assigned (or an optional 3rd Bluetooth speaker + Wired Primary) plus a working Windows default microphone.
+   - After draining `160 ms` of cold mic audio, PhaseMiX injects **4 alternating `44 ms` Hann-windowed logarithmic chirps (`600 Hz -> 3.4 kHz`)** over `3.05 s` (`BT 1` at `+180 ms`, `Wired 1` at `+980 ms`, `BT 2` at `+1750 ms`, `Wired 2` at `+2550 ms`) with any unused channel muted during the sweep.
    - An analytic quadrature matched filter (`find_chirp_arrival`, SNR `>= 4.0` threshold and earliest-direct-path crest scan within `6 ms`) measures exact arrival offset minus each thread's ring lag.
-   - Both burst pairs must agree within **`<= 18 ms`** (rejecting noisy/echoed takes); the averaged offset (`0–450 ms`) updates **Primary AUX** and **Built-in** delays and is retained across preset changes (`calibrated_delay_ms`).
+   - Both burst pairs must agree within **`<= 18 ms`** (rejecting noisy/echoed takes); the averaged offset (`0–450 ms`) locks your wired/built-in delay to match Bluetooth (`0 ms` BT anchor) and is retained across preset changes (`calibrated_delay_ms`).
 2. **Manual Ear-Tuning Signals:** Built-in `Sync Click` (`2 ms` transient impulse), `Bass + Vocal`, and `L / C / R` generators let you fine-tune delays by hand in `±2 ms` steps when using asymmetric setups or a second wireless USB transmitter.
 
 ---
 
 ## Limitations & Windows Configuration Notes
 
-- **Not Low-Latency for Competitive Gaming / Live Monitoring:** With a `125 ms` ring cushion plus typical Bluetooth A2DP latency (`~180–250 ms`), PhaseMiX targets **music, YouTube, movies, and general media** rather than real-time gaming or DAW instrument monitoring.
-- **WASAPI Shared Mode & OEM Audio Enhancements:** PhaseMiX uses WASAPI `Shared Mode` (`EventsShared`) for broad compatibility and sample-rate autoconversion. Downstream Windows/OEM APO processing (**Realtek SmartAmp, Dolby/DTS, Loudness Equalization, or Windows Communications auto-ducking**) varies per machine/driver and can still alter tone or loudness outside PhaseMiX unless disabled in Windows Sound Settings.
-- **2-Speaker Auto-Align Scope:** Mic Auto-Align measures the lag differential between **Primary AUX** and **Center Wireless** (copying the result to **Built-in**). Multi-wireless setups (e.g., laptop BT + USB BT transmitter) require manual `Sync Click` tuning.
+- **Not Low-Latency for Competitive Gaming / Live Monitoring:** With a `125 ms` ring cushion plus typical Bluetooth A2DP latency (`~180–250 ms`), PhaseMiX targets **music, YouTube, movies, and general media** rather than real-time gaming or DAW instrument monitoring (use `Wired AUX` mode for `0 ms` delay offset between speakers).
+- **WASAPI Shared Mode & OEM Audio Enhancements:** PhaseMiX uses WASAPI `Shared Mode` (`EventsShared`) for broad compatibility and sample-rate autoconversion. Downstream Windows/OEM APO processing (**Realtek SmartAmp, Dolby/DTS, Loudness Equalization**) varies per machine/driver — PhaseMiX's `wireless_master_gain` curve automatically bridges the loudness gap between APO-boosted built-in speakers and raw Bluetooth A2DP streams, while `ISimpleAudioVolume` unity prevents Windows Communications auto-ducking.
+- **2-Speaker Auto-Align Scope:** Mic Auto-Align measures the lag differential between your active **Bluetooth** speaker and **Built-in / Wired** speaker pair. Multi-wireless setups (e.g., laptop BT + USB BT transmitter) require manual `Sync Click` tuning.
 - **Non-`48 kHz` Fallback Resampling:** Most drivers accept `48 kHz` `EventsShared` directly via Windows SRC; if a strict capture driver rejects it and falls back to `PollingShared` at a different rate (e.g., `44.1 kHz`), capture conversion uses stateless per-packet linear interpolation.
 - **Bluetooth RF Stability:** While PhaseMiX cushions `70 ms` in WASAPI and auto-restores endpoints/volumes on reconnect, wireless dropouts from `2.4 GHz` Wi-Fi congestion or range happen below the Windows audio stack.
 
@@ -91,12 +91,12 @@ flowchart LR
 
 | Preset | Stage Strategy | Safety / Focus |
 | :--- | :--- | :--- |
-| **Desk Triangle** | Flanking L/R + `260 Hz+` vocal center + bright front air | Everyday balanced listening |
-| **Cinema 3.2 Dialogue** | Widened L/R (`135%`) + `+3.5 dB` speech lock + side ambience | Movies & dialogue clarity |
-| **Wide Room Music** | Boosted subs + full-mid center + sparkling tweeters | Full-room music punch |
-| **Night Ear-Safe** | Tamed lows + soft vocal center | Strict `60%` cap & `-15 dB` limiter |
-| **Offset Desk** | Compensates asymmetric L/R speaker placement (`+18` balance) | Off-center desks |
-| **Pure Flat** | `0 dB` across all 9 bands | Direct stereo reference |
+| **Desk 4.2 Full Range** | Primary 2.2 full subs & stereo + Built-in `210 Hz–20 kHz` near-field vocals & air | Everyday balanced 4.2 listening |
+| **Cinema 4.2 Dialogue** | Widened Primary L/R (`132%`) + deep rumble subs + screen-locked dialogue | Movies & dialogue clarity |
+| **Wide Room 4.2 Music** | Punchy 2.2 dual subs (`+3.5 dB`) + sparkling near-field air | Full-room music punch |
+| **Night Ear-Safe** | Tamed dual subs (`-4.5 dB`) + clear near-field voices | Strict `60%` cap & `-15 dB` limiter |
+| **Offset Desk 4.2** | Compensates asymmetric primary L/R placement (`+16` balance) | Off-center desks |
+| **Pure Flat 4.2** | `0 dB` flat EQ across Primary 2.2 & Built-in 2.0 (`180 Hz` sub-guard) | Direct stereo reference |
 
 ---
 
@@ -115,12 +115,11 @@ flowchart LR
 
 Run `PhaseMiX-Setup.exe` (NSIS, current-user install) for a standalone Edge WebView2 window with native tray controls, single-instance focus restore, and config stored in `%APPDATA%\PhaseMiX\config.json`.
 
-To build the `.exe` installer from source:
+To build the `.exe` installer from source (from the repository root):
 
 ```powershell
-cd frontend
-npm install && npm run build
-npx tauri build --bundles nsis
+npm --prefix frontend install
+.\frontend\node_modules\.bin\tauri build --bundles nsis
 ```
 
 ---
@@ -132,8 +131,8 @@ Requires **Node.js 18+**, **Rust (Cargo)**, and **Windows Tauri v2 prerequisites
 ```powershell
 git clone https://github.com/kuberbassi/PhaseMiX.git
 cd PhaseMiX
-cd frontend && npm install
-npx tauri dev
+npm --prefix frontend install
+.\frontend\node_modules\.bin\tauri dev
 ```
 
 ---

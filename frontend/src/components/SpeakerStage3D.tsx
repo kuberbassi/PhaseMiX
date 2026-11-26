@@ -8,6 +8,8 @@ interface SpeakerStage3DProps {
   mixer: MixerState;
   targetFps?: number;
   paused?: boolean;
+  intexIsWireless?: boolean;
+  showThirdSpeaker?: boolean;
   onSoloRole?: (role: Role) => void;
 }
 
@@ -32,7 +34,8 @@ function drawLaptopScreen(
   ampIn: number,
   ampI: number,
   ampB: number,
-  ampL: number
+  ampL: number,
+  showThirdSpeaker: boolean
 ) {
   ctx.fillStyle = "#0e1015";
   ctx.fillRect(0, 0, w, h);
@@ -43,24 +46,31 @@ function drawLaptopScreen(
 
   ctx.fillStyle = "#d4d4d8";
   ctx.font = "bold 12px sans-serif";
-  ctx.fillText("PHASEMIX", 14, 24);
+  ctx.fillText(showThirdSpeaker ? "PHASEMIX 5.2" : "PHASEMIX 4.2", 14, 24);
 
   ctx.fillStyle = muted ? "#ef4444" : "#22c55e";
   ctx.beginPath();
   ctx.arc(w - 20, 20, 4, 0, Math.PI * 2);
   ctx.fill();
 
-  const bars = [
-    { label: "IN", val: ampIn, col: "#e4e4e7" },
-    { label: "AUX", val: ampI, col: "#22c55e" },
-    { label: "BT", val: ampB, col: "#60a5fa" },
-    { label: "PC", val: ampL, col: "#a1a1aa" },
-  ];
+  const bars = showThirdSpeaker
+    ? [
+        { label: "IN", val: ampIn, col: "#e4e4e7" },
+        { label: "MAIN", val: ampI, col: "#22c55e" },
+        { label: "AUX", val: ampB, col: "#60a5fa" },
+        { label: "PC", val: ampL, col: "#a1a1aa" },
+      ]
+    : [
+        { label: "IN", val: ampIn, col: "#e4e4e7" },
+        { label: "MAIN", val: ampI, col: "#22c55e" },
+        { label: "PC", val: ampL, col: "#a1a1aa" },
+      ];
   const baseBottom = h - 22;
   const maxBarH = 56;
-  const barW = 34;
-  const startX = 24;
-  const gap = 22;
+  const barW = showThirdSpeaker ? 34 : 46;
+  const gap = showThirdSpeaker ? 22 : 28;
+  const totalW = bars.length * barW + (bars.length - 1) * gap;
+  const startX = Math.round((w - totalW) / 2);
 
   bars.forEach((b, i) => {
     const x = startX + i * (barW + gap);
@@ -71,7 +81,7 @@ function drawLaptopScreen(
     ctx.fillRect(x, baseBottom - bh, barW, bh);
     ctx.fillStyle = "#71717a";
     ctx.font = "bold 9px monospace";
-    ctx.fillText(b.label, x + 7, h - 9);
+    ctx.fillText(b.label, x + 4, h - 9);
   });
 }
 
@@ -79,17 +89,23 @@ export const SpeakerStage3D = memo(function SpeakerStage3D({
   mixer,
   targetFps = 60,
   paused = false,
+  intexIsWireless = false,
+  showThirdSpeaker = false,
   onSoloRole,
 }: SpeakerStage3DProps) {
   const mountRef = useRef<HTMLDivElement | null>(null);
   const mixerRef = useRef(mixer);
   const fpsRef = useRef(targetFps);
   const pausedRef = useRef(paused);
+  const wirelessRef = useRef(intexIsWireless);
+  const thirdRef = useRef(showThirdSpeaker);
   const soloCbRef = useRef(onSoloRole);
   const wakeRef = useRef<(() => void) | null>(null);
   mixerRef.current = mixer;
   fpsRef.current = targetFps;
   pausedRef.current = paused;
+  wirelessRef.current = intexIsWireless;
+  thirdRef.current = showThirdSpeaker;
   soloCbRef.current = onSoloRole;
 
   const [hoverHud, setHoverHud] = useState<HoverHud | null>(null);
@@ -286,7 +302,7 @@ export const SpeakerStage3D = memo(function SpeakerStage3D({
     const screenCtx = screenCanvas.getContext("2d");
     const screenTex = new THREE.CanvasTexture(screenCanvas);
     if (screenCtx) {
-      drawLaptopScreen(screenCtx, 256, 128, false, 0, 0, 0, 0);
+      drawLaptopScreen(screenCtx, 256, 128, false, 0, 0, 0, 0, thirdRef.current);
       screenTex.needsUpdate = true;
     }
 
@@ -375,7 +391,15 @@ export const SpeakerStage3D = memo(function SpeakerStage3D({
       ndc.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
       raycaster.setFromCamera(ndc, camera);
       const hits = raycaster.intersectObjects(pickTargets, true);
-      const r = hits[0]?.object?.userData?.role;
+      const hit = hits.find((h) => {
+        let cur: THREE.Object3D | null = h.object;
+        while (cur) {
+          if (!cur.visible) return false;
+          cur = cur.parent;
+        }
+        return true;
+      });
+      const r = hit?.object?.userData?.role;
       return r === "intex" || r === "boat" || r === "laptop" ? r : null;
     };
 
@@ -390,9 +414,12 @@ export const SpeakerStage3D = memo(function SpeakerStage3D({
       const mx = mixerRef.current;
       const isSolo = mx.solo === r;
       const meta: Record<Role, { title: string; delay: number }> = {
-        intex: { title: "Primary 2.1 / AUX", delay: mx.intex_delay_ms },
-        boat: { title: "Center / Wireless", delay: mx.boat_delay_ms },
-        laptop: { title: "Built-in Speakers", delay: mx.laptop_delay_ms },
+        intex: {
+          title: wirelessRef.current ? "Primary 2.2 (Bluetooth)" : "Primary 2.2 (Wired AUX)",
+          delay: mx.intex_delay_ms,
+        },
+        boat: { title: "Auxiliary Speaker", delay: mx.boat_delay_ms },
+        laptop: { title: "Built-in Speakers (2.0)", delay: mx.laptop_delay_ms },
       };
       setHoverHud({
         role: r,
@@ -494,7 +521,8 @@ export const SpeakerStage3D = memo(function SpeakerStage3D({
         m.intex_db,
         mVol,
         true,
-        mMute || mx.intex_mute || (solo !== null && solo !== "intex")
+        mMute || mx.intex_mute || (solo !== null && solo !== "intex"),
+        wirelessRef.current
       );
       const ampB = dbToVisualNorm(
         m.boat_db,
@@ -536,11 +564,18 @@ export const SpeakerStage3D = memo(function SpeakerStage3D({
         if (lookAtListener) obj.lookAt(0, obj.position.y, 1.35);
       };
 
+      const hasThird = thirdRef.current;
+      const isBtMode = wirelessRef.current;
+      boat.group.visible = hasThird;
+      waveBoat.mesh.visible = hasThird;
+
       moveObj(intexL.group, L.intexL[0] * widthScale, L.intexL[1], L.intexL[2]);
       moveObj(intexR.group, L.intexR[0] * widthScale, L.intexR[1], L.intexR[2]);
       moveObj(subL.group, L.subL[0] * (0.85 + 0.15 * widthScale), L.subL[1], L.subL[2]);
       moveObj(subR.group, L.subR[0] * (0.85 + 0.15 * widthScale), L.subR[1], L.subR[2]);
-      moveObj(boat.group, L.boat[0], L.boat[1], L.boat[2], false);
+      if (hasThird) {
+        moveObj(boat.group, L.boat[0], L.boat[1], L.boat[2], false);
+      }
       moveObj(laptop.group, L.laptop[0], L.laptop[1], L.laptop[2], false);
 
       const bal = Math.max(-100, Math.min(100, mx.intex_balance)) / 100;
@@ -564,21 +599,23 @@ export const SpeakerStage3D = memo(function SpeakerStage3D({
       subL.ringMat.emissiveIntensity = 0.15 + ampI * balL * 1.05;
       subR.ringMat.emissiveIntensity = 0.15 + ampI * balR * 1.05;
 
-      const boatSign = mx.boat_invert ? -1 : 1;
-      const pulseB = Math.sin(elapsed * 30) * 0.028 * ampB * boatSign;
-      boat.capL.position.x = -0.46 - pulseB;
-      boat.capR.position.x = 0.46 + pulseB;
-      const boatCol = mx.boat_invert
-        ? colAmber
-        : solo !== null && solo !== "boat"
-          ? colDim
-          : solo === "boat" || activeHoverRole === "boat"
-            ? colGreen
-            : colWhite;
-      boat.ringMat.emissive.copy(boatCol);
-      boat.ringMat.emissiveIntensity = (solo === "boat" || activeHoverRole === "boat" ? 0.38 : 0.15) + ampB * 0.95;
-      ledGreen.emissive.copy(mx.boat_invert ? colAmber : colGreen);
-      ledGreen.emissiveIntensity = 0.4 + ampB * 1.25;
+      if (hasThird) {
+        const boatSign = mx.boat_invert ? -1 : 1;
+        const pulseB = Math.sin(elapsed * 30) * 0.028 * ampB * boatSign;
+        boat.capL.position.x = -0.46 - pulseB;
+        boat.capR.position.x = 0.46 + pulseB;
+        const boatCol = mx.boat_invert
+          ? colAmber
+          : solo !== null && solo !== "boat"
+            ? colDim
+            : solo === "boat" || activeHoverRole === "boat"
+              ? colGreen
+              : colWhite;
+        boat.ringMat.emissive.copy(boatCol);
+        boat.ringMat.emissiveIntensity = (solo === "boat" || activeHoverRole === "boat" ? 0.38 : 0.15) + ampB * 0.95;
+        ledGreen.emissive.copy(mx.boat_invert ? colAmber : colGreen);
+        ledGreen.emissiveIntensity = 0.4 + ampB * 1.25;
+      }
 
       const laptopCol = mx.laptop_invert
         ? colAmber
@@ -591,9 +628,13 @@ export const SpeakerStage3D = memo(function SpeakerStage3D({
       laptop.barMat.emissiveIntensity = (solo === "laptop" || activeHoverRole === "laptop" ? 0.38 : 0.15) + ampL * 0.9;
 
       const delayDiff = Math.abs(mx.intex_delay_ms - mx.laptop_delay_ms);
-      const syncGood = delayDiff <= 8 && mx.intex_delay_ms > 0;
+      const syncGood = hasThird
+        ? delayDiff <= 8 && mx.intex_delay_ms > 0
+        : isBtMode
+          ? mx.intex_delay_ms <= 8 && mx.laptop_delay_ms >= 80
+          : delayDiff <= 8;
       listenerMat.color.copy(mx.master_mute ? colDim : syncGood ? colGreen : colAmber);
-      listenerMat.opacity = mx.master_mute ? 0.25 : 0.4 + (ampI + ampB + ampL) * 0.14;
+      listenerMat.opacity = mx.master_mute ? 0.25 : 0.4 + (ampI + (hasThird ? ampB : 0) + ampL) * 0.14;
 
       const updateWave = (
         w: { mesh: THREE.Mesh; mat: THREE.MeshBasicMaterial },
@@ -611,13 +652,15 @@ export const SpeakerStage3D = memo(function SpeakerStage3D({
         w.mat.color.copy(col);
         w.mat.opacity = (0.04 + amp * 0.3) * (1 - phase);
       };
-      updateWave(waveIntex, intexL.group.position.x * 0 + bal * 0.45, (L.subL[2] + L.subR[2]) * 0.5, ampI, 0.85, syncGood ? colGreen : colWhite);
-      updateWave(waveBoat, L.boat[0], L.boat[2], ampB, 1.1, mx.boat_invert ? colAmber : colWhite);
+      updateWave(waveIntex, bal * 0.45, (L.subL[2] + L.subR[2]) * 0.5, ampI, 0.85, syncGood ? colGreen : colWhite);
+      if (hasThird) {
+        updateWave(waveBoat, L.boat[0], L.boat[2], ampB, 1.1, mx.boat_invert ? colAmber : colWhite);
+      }
       updateWave(waveLaptop, L.laptop[0], L.laptop[2], ampL, 1.3, mx.laptop_invert ? colAmber : colWhite);
 
       if (screenCtx && now - lastScreenDraw >= 28) {
         lastScreenDraw = now;
-        drawLaptopScreen(screenCtx, 256, 128, mMute || mx.master_mute, ampIn, ampI, ampB, ampL);
+        drawLaptopScreen(screenCtx, 256, 128, mMute || mx.master_mute, ampIn, ampI, ampB, ampL, hasThird);
         screenTex.needsUpdate = true;
       }
 
@@ -661,26 +704,38 @@ export const SpeakerStage3D = memo(function SpeakerStage3D({
   }, []);
 
   const delayDiff = Math.abs(mixer.intex_delay_ms - mixer.laptop_delay_ms);
-  const synced = delayDiff <= 8 && mixer.intex_delay_ms > 0;
+  const synced = showThirdSpeaker
+    ? delayDiff <= 8 && mixer.intex_delay_ms > 0
+    : intexIsWireless
+      ? mixer.intex_delay_ms <= 8 && mixer.laptop_delay_ms >= 80
+      : delayDiff <= 8;
+
+  const badgeText = showThirdSpeaker
+    ? synced
+      ? `SYNC ${mixer.intex_delay_ms} ms`
+      : `OFFSET ${delayDiff} ms`
+    : intexIsWireless
+      ? `BT 4.2 · ${mixer.laptop_delay_ms} ms`
+      : `WIRED 4.2 · ${Math.max(mixer.intex_delay_ms, mixer.laptop_delay_ms)} ms`;
 
   return (
-    <div className="relative h-[280px] sm:h-[320px] w-full overflow-hidden rounded-xl border border-white/[0.06] bg-[#141519]">
+    <div className="relative h-[240px] w-full overflow-hidden rounded-xl border border-white/[0.06] bg-[#141519] sm:h-[280px] xl:h-[300px] 2xl:h-[330px]">
       <div
         ref={mountRef}
         className={`h-full w-full ${cursorStyle === "pointer" ? "cursor-pointer" : "cursor-grab active:cursor-grabbing"}`}
       />
-      <div className="pointer-events-none absolute top-3 left-3 right-3 flex items-center justify-between gap-2">
-        <span className="rounded-md border border-white/[0.08] bg-black/55 px-2.5 py-1 text-[11px] font-medium text-zinc-300">
-          3D Room · Click speaker to Solo · Scroll zoom
+      <div className="pointer-events-none absolute top-2.5 right-2.5 left-2.5 flex flex-wrap items-center justify-between gap-1.5">
+        <span className="truncate rounded-md border border-white/[0.08] bg-black/55 px-2 py-0.5 text-[10.5px] font-medium text-zinc-300">
+          {showThirdSpeaker ? "5.2 Stage" : "4.2 Stage"} · Click to Solo · Scroll zoom
         </span>
         <span
-          className={`rounded-md border px-2 py-0.5 font-mono text-[10px] font-semibold ${
+          className={`shrink-0 rounded-md border px-2 py-0.5 font-mono text-[10px] font-semibold ${
             synced
               ? "border-emerald-500/30 bg-emerald-500/15 text-emerald-300"
               : "border-amber-500/30 bg-amber-500/15 text-amber-300"
           }`}
         >
-          {synced ? `SYNC ${mixer.intex_delay_ms} ms` : `OFFSET ${delayDiff} ms`}
+          {badgeText}
         </span>
       </div>
       {hoverHud && (

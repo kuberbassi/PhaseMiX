@@ -8,6 +8,15 @@ export function perceptualMasterGain(volPct: number): number {
   return Math.min(2, volPct / 100);
 }
 
+/// Matches the backend Bluetooth/wireless master curve (`dsp::wireless_master_gain`).
+export function wirelessMasterGain(volPct: number): number {
+  if (!Number.isFinite(volPct) || volPct <= 0) return 0;
+  if (volPct <= 60) {
+    return Math.pow(volPct / 60, 0.8);
+  }
+  return Math.min(2, 1 + ((volPct - 60) / 40) * 0.45);
+}
+
 /**
  * Converts a live audio meter reading (dBFS, floor -92 dB) into a snappy 0..1 visual amplitude.
  * Partially compensates low perceptual Master % so output LEDs & 3D cones dance responsively at any listening volume.
@@ -16,12 +25,13 @@ export function dbToVisualNorm(
   db: number,
   masterVolPct: number,
   isOutput = true,
-  muted = false
+  muted = false,
+  isWireless = false
 ): number {
   if (muted || !Number.isFinite(db) || db <= -89) return 0;
   let effectiveDb = db;
   if (isOutput) {
-    const g = perceptualMasterGain(masterVolPct);
+    const g = isWireless ? wirelessMasterGain(masterVolPct) : perceptualMasterGain(masterVolPct);
     if (g <= 0.0002) return 0;
     const attenDb = Math.max(0, -20 * Math.log10(g));
     effectiveDb = Math.min(0, db + attenDb * 0.78);

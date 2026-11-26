@@ -86,12 +86,12 @@ pub struct ProfileIoResponse {
 
 fn preset_short_label(id: &str) -> &'static str {
     match id {
-        "desk_triangle" => "Desk Triangle",
-        "cinema_center" => "Cinema 3.2",
-        "wide_room" => "Wide Room",
+        "desk_triangle" => "Desk 4.2",
+        "cinema_center" => "Cinema 4.2",
+        "wide_room" => "Wide Room 4.2",
         "night_safe" => "Night Safe",
-        "asym_desk" => "Offset Desk",
-        "pure_mirror" => "Pure Flat",
+        "asym_desk" => "Offset 4.2",
+        "pure_mirror" => "Pure Flat 4.2",
         _ => "Custom",
     }
 }
@@ -576,7 +576,7 @@ pub fn run() {
             let p_desk = CheckMenuItem::with_id(
                 app,
                 "preset:desk_triangle",
-                "Desk Triangle (Balanced)",
+                "Desk 4.2 Full Range",
                 true,
                 cur_p == "desk_triangle",
                 None::<&str>,
@@ -584,7 +584,7 @@ pub fn run() {
             let p_cinema = CheckMenuItem::with_id(
                 app,
                 "preset:cinema_center",
-                "Cinema 3.2 Dialogue",
+                "Cinema 4.2 Dialogue",
                 true,
                 cur_p == "cinema_center",
                 None::<&str>,
@@ -592,7 +592,7 @@ pub fn run() {
             let p_music = CheckMenuItem::with_id(
                 app,
                 "preset:wide_room",
-                "Wide Room Music",
+                "Wide Room 4.2 Music",
                 true,
                 cur_p == "wide_room",
                 None::<&str>,
@@ -608,7 +608,7 @@ pub fn run() {
             let p_offset = CheckMenuItem::with_id(
                 app,
                 "preset:asym_desk",
-                "Offset Desk",
+                "Offset Desk 4.2",
                 true,
                 cur_p == "asym_desk",
                 None::<&str>,
@@ -616,7 +616,7 @@ pub fn run() {
             let p_flat = CheckMenuItem::with_id(
                 app,
                 "preset:pure_mirror",
-                "Pure Flat",
+                "Pure Flat 4.2",
                 true,
                 cur_p == "pure_mirror",
                 None::<&str>,

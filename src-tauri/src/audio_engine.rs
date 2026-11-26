@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
@@ -17,6 +17,7 @@ use wasapi::{
 use windows::core::w;
 use windows::Win32::Foundation::HANDLE;
 use windows::Win32::Media::Audio::Endpoints::IAudioEndpointVolume;
+use windows::Win32::Media::Audio::IAudioSessionManager;
 use windows::Win32::System::Com::CLSCTX_ALL;
 use windows::Win32::System::Threading::{
     AvRevertMmThreadCharacteristics, AvSetMmThreadCharacteristicsW, GetCurrentThread,
@@ -229,34 +230,34 @@ impl Default for MixerState {
             master_mute: false,
             protection_enabled: true,
             protection_max_master: 60.0,
-            protection_ceiling_db: -6.0,
+            protection_ceiling_db: -3.0,
             position_preset: "desk_triangle".to_string(),
-            intex_vol: 100.0,
+            intex_vol: 105.0,
             intex_mute: false,
-            intex_delay_ms: 224.0,
+            intex_delay_ms: 0.0,
             intex_balance: 0.0,
-            intex_bass_db: 0.5,
-            intex_mid_db: -2.0,
-            intex_treble_db: 0.5,
-            intex_width: 106.0,
-            boat_vol: 60.0,
+            intex_bass_db: 1.0,
+            intex_mid_db: -0.5,
+            intex_treble_db: 1.0,
+            intex_width: 108.0,
+            boat_vol: 95.0,
             boat_mute: false,
             boat_delay_ms: 0.0,
-            boat_mode: "vocal_mid".to_string(),
-            boat_hpf_hz: 260.0,
-            boat_lpf_hz: 14000.0,
-            boat_bass_db: -2.5,
-            boat_mid_db: 2.0,
+            boat_mode: "stereo".to_string(),
+            boat_hpf_hz: 120.0,
+            boat_lpf_hz: 18000.0,
+            boat_bass_db: 0.0,
+            boat_mid_db: 0.5,
             boat_treble_db: 0.5,
             boat_invert: false,
-            laptop_vol: 125.0,
+            laptop_vol: 115.0,
             laptop_mute: false,
-            laptop_delay_ms: 224.0,
+            laptop_delay_ms: 0.0,
             laptop_mode: "stereo".to_string(),
-            laptop_hpf_hz: 300.0,
+            laptop_hpf_hz: 210.0,
             laptop_lpf_hz: 18000.0,
-            laptop_bass_db: -2.0,
-            laptop_mid_db: 0.0,
+            laptop_bass_db: -1.0,
+            laptop_mid_db: 1.5,
             laptop_treble_db: 2.0,
             laptop_invert: false,
             solo: None,
@@ -271,79 +272,79 @@ pub fn preset_patch(id: &str) -> Option<MixerPatch> {
         "desk_triangle" => MixerPatch {
             position_preset: Some("desk_triangle".into()),
             protection_max_master: Some(60.0),
-            protection_ceiling_db: Some(-6.0),
-            intex_vol: Some(100.0),
+            protection_ceiling_db: Some(-3.0),
+            intex_vol: Some(105.0),
             intex_balance: Some(0.0),
-            intex_width: Some(106.0),
-            intex_bass_db: Some(0.5),
-            intex_mid_db: Some(-2.0),
-            intex_treble_db: Some(0.5),
-            boat_vol: Some(60.0),
-            boat_mode: Some("vocal_mid".into()),
-            boat_hpf_hz: Some(260.0),
-            boat_lpf_hz: Some(14000.0),
-            boat_bass_db: Some(-2.5),
-            boat_mid_db: Some(2.0),
+            intex_width: Some(108.0),
+            intex_bass_db: Some(1.0),
+            intex_mid_db: Some(-0.5),
+            intex_treble_db: Some(1.0),
+            boat_vol: Some(95.0),
+            boat_mode: Some("stereo".into()),
+            boat_hpf_hz: Some(120.0),
+            boat_lpf_hz: Some(18000.0),
+            boat_bass_db: Some(0.0),
+            boat_mid_db: Some(0.5),
             boat_treble_db: Some(0.5),
-            laptop_vol: Some(125.0),
+            laptop_vol: Some(115.0),
             laptop_mode: Some("stereo".into()),
-            laptop_hpf_hz: Some(300.0),
+            laptop_hpf_hz: Some(210.0),
             laptop_lpf_hz: Some(18000.0),
-            laptop_bass_db: Some(-2.0),
-            laptop_mid_db: Some(0.0),
+            laptop_bass_db: Some(-1.0),
+            laptop_mid_db: Some(1.5),
             laptop_treble_db: Some(2.0),
             ..Default::default()
         },
         "cinema_center" => MixerPatch {
             position_preset: Some("cinema_center".into()),
             protection_max_master: Some(60.0),
-            protection_ceiling_db: Some(-6.0),
-            intex_vol: Some(100.0),
+            protection_ceiling_db: Some(-3.0),
+            intex_vol: Some(105.0),
             intex_balance: Some(0.0),
-            intex_width: Some(135.0),
-            intex_bass_db: Some(2.5),
-            intex_mid_db: Some(-3.5),
-            intex_treble_db: Some(0.0),
-            boat_vol: Some(72.0),
+            intex_width: Some(132.0),
+            intex_bass_db: Some(3.0),
+            intex_mid_db: Some(-2.0),
+            intex_treble_db: Some(0.5),
+            boat_vol: Some(95.0),
             boat_mode: Some("vocal_mid".into()),
-            boat_hpf_hz: Some(220.0),
-            boat_lpf_hz: Some(12000.0),
-            boat_bass_db: Some(-3.0),
-            boat_mid_db: Some(3.5),
+            boat_hpf_hz: Some(160.0),
+            boat_lpf_hz: Some(16000.0),
+            boat_bass_db: Some(-1.5),
+            boat_mid_db: Some(2.5),
             boat_treble_db: Some(1.0),
-            laptop_vol: Some(120.0),
-            laptop_mode: Some("side_ambience".into()),
-            laptop_hpf_hz: Some(340.0),
-            laptop_lpf_hz: Some(15000.0),
-            laptop_bass_db: Some(-3.0),
-            laptop_mid_db: Some(0.0),
-            laptop_treble_db: Some(2.0),
+            laptop_vol: Some(125.0),
+            laptop_mode: Some("vocal_mid".into()),
+            laptop_hpf_hz: Some(210.0),
+            laptop_lpf_hz: Some(18000.0),
+            laptop_bass_db: Some(-2.0),
+            laptop_mid_db: Some(3.0),
+            laptop_treble_db: Some(1.5),
             ..Default::default()
         },
         "wide_room" => MixerPatch {
             position_preset: Some("wide_room".into()),
             protection_max_master: Some(60.0),
-            protection_ceiling_db: Some(-6.0),
-            intex_vol: Some(110.0),
+            protection_ceiling_db: Some(-3.0),
+            intex_vol: Some(115.0),
             intex_balance: Some(0.0),
-            intex_width: Some(120.0),
-            intex_bass_db: Some(4.0),
-            intex_mid_db: Some(0.0),
-            intex_treble_db: Some(1.5),
-            boat_vol: Some(75.0),
-            boat_mode: Some("mono_center".into()),
-            boat_hpf_hz: Some(185.0),
-            boat_lpf_hz: Some(17500.0),
-            boat_bass_db: Some(0.0),
-            boat_mid_db: Some(1.5),
+            intex_width: Some(122.0),
+            intex_bass_db: Some(3.5),
+            intex_mid_db: Some(0.5),
+            intex_treble_db: Some(2.0),
+            boat_vol: Some(100.0),
+            boat_mode: Some("stereo".into()),
+            boat_hpf_hz: Some(100.0),
+            boat_lpf_hz: Some(18000.0),
+            boat_bass_db: Some(1.0),
+            boat_mid_db: Some(0.5),
             boat_treble_db: Some(1.5),
-            laptop_vol: Some(160.0),
+            laptop_vol: Some(120.0),
             laptop_mode: Some("stereo".into()),
-            laptop_hpf_hz: Some(250.0),
+            laptop_hpf_hz: Some(190.0),
             laptop_lpf_hz: Some(18000.0),
-            laptop_bass_db: Some(0.0),
+            laptop_bass_db: Some(-0.5),
             laptop_mid_db: Some(1.0),
-            laptop_treble_db: Some(2.0),
+            laptop_treble_db: Some(2.5),
             ..Default::default()
         },
         "night_safe" => MixerPatch {
@@ -351,74 +352,74 @@ pub fn preset_patch(id: &str) -> Option<MixerPatch> {
             protection_enabled: Some(true),
             protection_max_master: Some(60.0),
             protection_ceiling_db: Some(-15.0),
-            intex_vol: Some(75.0),
+            intex_vol: Some(80.0),
             intex_balance: Some(0.0),
-            intex_width: Some(95.0),
-            intex_bass_db: Some(-5.0),
-            intex_mid_db: Some(0.0),
-            intex_treble_db: Some(-2.0),
-            boat_vol: Some(65.0),
+            intex_width: Some(96.0),
+            intex_bass_db: Some(-4.5),
+            intex_mid_db: Some(0.5),
+            intex_treble_db: Some(-1.5),
+            boat_vol: Some(80.0),
             boat_mode: Some("vocal_mid".into()),
-            boat_hpf_hz: Some(240.0),
-            boat_lpf_hz: Some(10000.0),
+            boat_hpf_hz: Some(200.0),
+            boat_lpf_hz: Some(12000.0),
             boat_bass_db: Some(-2.5),
-            boat_mid_db: Some(2.0),
+            boat_mid_db: Some(1.5),
             boat_treble_db: Some(-1.5),
-            laptop_vol: Some(80.0),
+            laptop_vol: Some(85.0),
             laptop_mode: Some("stereo".into()),
-            laptop_hpf_hz: Some(280.0),
-            laptop_lpf_hz: Some(12000.0),
-            laptop_bass_db: Some(-3.0),
-            laptop_mid_db: Some(1.0),
-            laptop_treble_db: Some(-2.0),
+            laptop_hpf_hz: Some(230.0),
+            laptop_lpf_hz: Some(14000.0),
+            laptop_bass_db: Some(-2.5),
+            laptop_mid_db: Some(1.5),
+            laptop_treble_db: Some(-1.5),
             ..Default::default()
         },
         "asym_desk" => MixerPatch {
             position_preset: Some("asym_desk".into()),
             protection_max_master: Some(60.0),
-            protection_ceiling_db: Some(-6.0),
-            intex_vol: Some(100.0),
-            intex_balance: Some(18.0),
-            intex_width: Some(105.0),
-            intex_bass_db: Some(1.0),
-            intex_mid_db: Some(-1.5),
-            intex_treble_db: Some(0.5),
-            boat_vol: Some(65.0),
-            boat_mode: Some("vocal_mid".into()),
-            boat_hpf_hz: Some(280.0),
-            boat_lpf_hz: Some(16000.0),
-            boat_bass_db: Some(-2.0),
-            boat_mid_db: Some(2.0),
+            protection_ceiling_db: Some(-3.0),
+            intex_vol: Some(105.0),
+            intex_balance: Some(16.0),
+            intex_width: Some(108.0),
+            intex_bass_db: Some(1.5),
+            intex_mid_db: Some(-0.5),
+            intex_treble_db: Some(1.0),
+            boat_vol: Some(95.0),
+            boat_mode: Some("stereo".into()),
+            boat_hpf_hz: Some(140.0),
+            boat_lpf_hz: Some(18000.0),
+            boat_bass_db: Some(0.0),
+            boat_mid_db: Some(1.0),
             boat_treble_db: Some(1.0),
-            laptop_vol: Some(165.0),
+            laptop_vol: Some(125.0),
             laptop_mode: Some("stereo".into()),
-            laptop_hpf_hz: Some(260.0),
+            laptop_hpf_hz: Some(210.0),
             laptop_lpf_hz: Some(18000.0),
             laptop_bass_db: Some(-1.0),
-            laptop_mid_db: Some(0.5),
-            laptop_treble_db: Some(1.5),
+            laptop_mid_db: Some(1.0),
+            laptop_treble_db: Some(2.0),
             ..Default::default()
         },
         "pure_mirror" => MixerPatch {
             position_preset: Some("pure_mirror".into()),
             protection_max_master: Some(60.0),
-            protection_ceiling_db: Some(-6.0),
+            protection_ceiling_db: Some(-3.0),
             intex_vol: Some(100.0),
             intex_balance: Some(0.0),
             intex_width: Some(100.0),
             intex_bass_db: Some(0.0),
             intex_mid_db: Some(0.0),
             intex_treble_db: Some(0.0),
-            boat_vol: Some(65.0),
+            boat_vol: Some(100.0),
             boat_mode: Some("stereo".into()),
             boat_hpf_hz: Some(0.0),
             boat_lpf_hz: Some(18000.0),
             boat_bass_db: Some(0.0),
             boat_mid_db: Some(0.0),
             boat_treble_db: Some(0.0),
-            laptop_vol: Some(130.0),
+            laptop_vol: Some(100.0),
             laptop_mode: Some("stereo".into()),
-            laptop_hpf_hz: Some(220.0),
+            laptop_hpf_hz: Some(180.0),
             laptop_lpf_hz: Some(18000.0),
             laptop_bass_db: Some(0.0),
             laptop_mid_db: Some(0.0),
@@ -987,7 +988,7 @@ pub fn list_wasapi_devices() -> (Vec<DeviceInfo>, Vec<DeviceInfo>, bool) {
         let nl = d.name.to_lowercase();
         let rank = if nl.contains("headphones (realtek") {
             0
-        } else if nl.contains("stone") {
+        } else if nl.contains("3.0 bt") {
             1
         } else if nl.contains("speakers (realtek") {
             2
@@ -1066,6 +1067,15 @@ fn find_id_by_name(list: &[DeviceInfo], saved: &str) -> Option<String> {
     None
 }
 
+fn is_valid_primary_candidate(d: &DeviceInfo, laptop_id: &str) -> bool {
+    let nl = d.name.to_lowercase();
+    !nl.contains("hands-free")
+        && !nl.contains("ag audio")
+        && !nl.contains("speakers (realtek")
+        && !is_virtual_audio_name(&nl)
+        && d.id != laptop_id
+}
+
 fn pick_default_devices(
     inputs: &[DeviceInfo],
     outputs: &[DeviceInfo],
@@ -1086,54 +1096,50 @@ fn pick_default_devices(
         }
     }
 
-    let mut intex_id = find_id_by_name(outputs, &saved.intex_name).unwrap_or_default();
-    if intex_id.is_empty() && saved.intex_name.is_empty() {
-        for pat in ["headphones (realtek", "speakers (realtek"] {
-            if let Some(d) = outputs.iter().find(|d| d.name.to_lowercase().contains(pat)) {
+    // 1. Always reserve Laptop Built-in Speakers first so Primary Intex never double-routes onto it
+    let mut laptop_id = find_id_by_name(outputs, &saved.laptop_name).unwrap_or_default();
+    if laptop_id.is_empty() && saved.laptop_name.is_empty() {
+        if let Some(d) = outputs.iter().find(|d| {
+            let nl = d.name.to_lowercase();
+            nl.contains("speakers (realtek") && !is_virtual_audio_name(&nl)
+        }) {
+            laptop_id = d.id.clone();
+        }
+    }
+
+    // 2. Primary Intex IT-3000 (2.2): prefers Wired AUX (Headphones Realtek), seamlessly falls over to Intex 3.0 BT
+    let saved_intex_is_laptop = !saved.intex_name.is_empty()
+        && !saved.laptop_name.is_empty()
+        && saved.intex_name.eq_ignore_ascii_case(&saved.laptop_name);
+    let mut intex_id = if saved_intex_is_laptop {
+        String::new()
+    } else {
+        find_id_by_name(outputs, &saved.intex_name).unwrap_or_default()
+    };
+    if intex_id == laptop_id {
+        intex_id.clear();
+    }
+    let saved_intex_low = saved.intex_name.to_lowercase();
+    let allow_intex_failover = saved.intex_name.is_empty()
+        || saved_intex_is_laptop
+        || saved_intex_low.contains("headphones (realtek")
+        || saved_intex_low.contains("3.0 bt");
+    if intex_id.is_empty() && allow_intex_failover {
+        for pat in ["headphones (realtek", "headphones (3.0 bt", "3.0 bt"] {
+            if let Some(d) = outputs
+                .iter()
+                .find(|d| d.name.to_lowercase().contains(pat) && is_valid_primary_candidate(d, &laptop_id))
+            {
                 intex_id = d.id.clone();
                 break;
             }
         }
     }
 
+    // 3. Optional 3rd speaker (`boat`): only bind if explicitly saved and distinct from Intex & Laptop
     let mut boat_id = find_id_by_name(outputs, &saved.boat_name).unwrap_or_default();
-    if boat_id.is_empty() && saved.boat_name.is_empty() {
-        for pat in [
-            "headphones (stone",
-            "stone 358",
-            "headphones (3.0 bt",
-            "bluetooth",
-            "bt",
-            "soundcore",
-            "jbl",
-            "sony",
-            "bose",
-            "marshall",
-            "headphones (",
-        ] {
-            if let Some(d) = outputs.iter().find(|d| {
-                let nl = d.name.to_lowercase();
-                nl.contains(pat)
-                    && !nl.contains("realtek")
-                    && !nl.contains("hands-free")
-                    && !nl.contains("ag audio")
-                    && !is_virtual_audio_name(&nl)
-                    && d.id != intex_id
-            }) {
-                boat_id = d.id.clone();
-                break;
-            }
-        }
-    }
-
-    let mut laptop_id = find_id_by_name(outputs, &saved.laptop_name).unwrap_or_default();
-    if laptop_id.is_empty() && saved.laptop_name.is_empty() {
-        if let Some(d) = outputs.iter().find(|d| {
-            let nl = d.name.to_lowercase();
-            nl.contains("speakers (realtek") && d.id != intex_id && d.id != boat_id
-        }) {
-            laptop_id = d.id.clone();
-        }
+    if !boat_id.is_empty() && (boat_id == intex_id || boat_id == laptop_id) {
+        boat_id.clear();
     }
 
     SelectedIds {
@@ -1223,6 +1229,8 @@ pub fn default_config_path() -> PathBuf {
 
 struct CalibrationSync {
     active: AtomicBool,
+    bt_role: AtomicU8,
+    wired_role: AtomicU8,
     s0: AtomicU64,
     s1: AtomicU64,
     s2: AtomicU64,
@@ -1237,6 +1245,8 @@ impl Default for CalibrationSync {
     fn default() -> Self {
         Self {
             active: AtomicBool::new(false),
+            bt_role: AtomicU8::new(1),
+            wired_role: AtomicU8::new(3),
             s0: AtomicU64::new(0),
             s1: AtomicU64::new(0),
             s2: AtomicU64::new(0),
@@ -1287,6 +1297,28 @@ fn sanitize_win_vol_map(raw: HashMap<String, f64>) -> HashMap<String, f64> {
         .collect()
 }
 
+/// Ensures PhaseMiX's own per-app Windows Volume Mixer session is always 100% unmuted (beats Communications auto-ducking).
+fn ensure_session_unity(dev: &Device) {
+    unsafe {
+        if let Ok(mgr) = dev
+            .as_immdevice()
+            .Activate::<IAudioSessionManager>(CLSCTX_ALL, None)
+        {
+            if let Ok(sv) = mgr.GetSimpleAudioVolume(None, 0) {
+                let muted = sv.GetMute().map(|b| b.as_bool()).unwrap_or(false);
+                if muted {
+                    let _ = sv.SetMute(false, std::ptr::null());
+                }
+                if let Ok(v) = sv.GetMasterVolume() {
+                    if v < 0.99 {
+                        let _ = sv.SetMasterVolume(1.0, std::ptr::null());
+                    }
+                }
+            }
+        }
+    }
+}
+
 fn apply_saved_win_vol_for(inner: &EngineInner, dev_id: &str, dev_name: &str) {
     if dev_id.is_empty() || dev_name.is_empty() {
         return;
@@ -1294,7 +1326,43 @@ fn apply_saved_win_vol_for(inner: &EngineInner, dev_id: &str, dev_name: &str) {
     let saved = inner.win_device_vols.read().get(dev_name).copied();
     if let Some(pct) = saved {
         let _ = set_device_endpoint_volume(dev_id, pct.clamp(0.0, 100.0), true);
+        return;
     }
+    // Bluetooth A2DP endpoints on Windows use a -130 dB taper (32% = -17.3 dB!), making BT barely audible
+    // once PhaseMiX Master Bus also attenuates. When virtual loopback owns Windows playback, normalize
+    // unpinned severely-attenuated BT endpoints to 95% (~-0.9 dB) so BT matches wired Realtek drive.
+    if is_wireless_device_name(dev_name) && default_render_endpoint_info().2 {
+        ensure_com();
+        if let Ok(enumerator) = DeviceEnumerator::new() {
+            if let Ok(dev) = enumerator.get_device(dev_id) {
+                if let Some(info) = read_device_endpoint_vol(&dev, dev_id, dev_name) {
+                    if info.db < -6.0 || info.mute {
+                        let _ = set_device_endpoint_volume(dev_id, 95.0, true);
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Auto-syncs delays when Intex 2.2 switches between Wired AUX (0/0 ms) and Bluetooth (0/224 ms).
+fn sync_delays_for_intex_mode(inner: &EngineInner, intex_name: &str, boat_name: &str) {
+    if !boat_name.is_empty() || intex_name.is_empty() {
+        return;
+    }
+    let intex_is_bt = is_wireless_device_name(intex_name);
+    let mut m = inner.mixer.write();
+    if intex_is_bt {
+        let target_ms = m.calibrated_delay_ms.unwrap_or(224.0);
+        m.intex_delay_ms = 0.0;
+        if m.laptop_delay_ms < 20.0 {
+            m.laptop_delay_ms = target_ms;
+        }
+    } else {
+        m.intex_delay_ms = 0.0;
+        m.laptop_delay_ms = 0.0;
+    }
+    *inner.fast_params.write() = FastAudioParams::from_mixer(&m);
 }
 
 pub struct AudioRouterEngine {
@@ -1389,6 +1457,7 @@ impl AudioRouterEngine {
             return;
         };
         let mut m = parsed.mixer;
+        let mut devs = parsed.devices;
         m.enforce_protection_cap();
         m.test_mode = "off".to_string();
         m.master_mute = false;
@@ -1397,13 +1466,28 @@ impl AudioRouterEngine {
         m.laptop_mute = false;
         m.solo = None;
 
+        // Auto-heal legacy 5.2 configs where unplugged AUX caused Intex to duplicate Laptop Speakers
+        // while Intex 3.0 BT sat inside the vocal-filtered `boat` center slot.
+        let intex_dup_laptop = !devs.intex_name.is_empty()
+            && !devs.laptop_name.is_empty()
+            && devs.intex_name.eq_ignore_ascii_case(&devs.laptop_name);
+        if intex_dup_laptop {
+            if devs.boat_name.to_lowercase().contains("3.0 bt") {
+                devs.intex_name = std::mem::take(&mut devs.boat_name);
+                m.intex_delay_ms = 0.0;
+                m.laptop_delay_ms = m.calibrated_delay_ms.unwrap_or(224.0);
+            } else {
+                devs.intex_name.clear();
+            }
+        }
+
         if m.position_preset != "night_safe" && m.position_preset != "custom" {
             *inner.prev_day_preset.write() = m.position_preset.clone();
         }
         *inner.fast_params.write() = FastAudioParams::from_mixer(&m);
         *inner.mixer.write() = m;
-        *inner.selected_names.write() = parsed.devices.clone();
-        *inner.preferred_names.write() = parsed.devices;
+        *inner.selected_names.write() = devs.clone();
+        *inner.preferred_names.write() = devs;
         *inner.win_device_vols.write() = sanitize_win_vol_map(parsed.win_device_vols);
     }
 
@@ -1473,9 +1557,21 @@ impl AudioRouterEngine {
             },
         };
 
+        let prev_names = inner.selected_names.read().clone();
         *inner.selected_ids.write() = picked.clone();
         *inner.selected_names.write() = new_names.clone();
         *inner.preferred_names.write() = merged_preferred;
+
+        // If Primary Intex switched between Wired AUX and Wireless BT (e.g. hot-plugging AUX or connecting 3.0 BT),
+        // align delays automatically for zero-lag Wired 4.2 or phase-locked BT 4.2.
+        let intex_mode_switched = !new_names.intex_name.is_empty()
+            && (prev_names.intex_name.is_empty()
+                || is_wireless_device_name(&new_names.intex_name)
+                    != is_wireless_device_name(&prev_names.intex_name));
+        if intex_mode_switched && new_names.boat_name.is_empty() {
+            sync_delays_for_intex_mode(inner, &new_names.intex_name, &new_names.boat_name);
+        }
+
         if persist {
             Self::save_config_now(inner);
         }
@@ -1522,7 +1618,31 @@ impl AudioRouterEngine {
         Self::refresh_device_selection_inner(&self.inner, false)
     }
 
-    pub fn set_devices(&self, ids: SelectedIds) -> StatusPayload {
+    pub fn set_devices(&self, mut ids: SelectedIds) -> StatusPayload {
+        let prev_ids = self.inner.selected_ids.read().clone();
+        let prev_names = self.inner.selected_names.read().clone();
+
+        // Prevent accidental double-routing of the exact same Windows audio endpoint across two channels
+        if !ids.intex_id.is_empty() && ids.intex_id == ids.laptop_id {
+            if ids.intex_id != prev_ids.intex_id {
+                ids.laptop_id.clear();
+            } else {
+                ids.intex_id.clear();
+            }
+        }
+        if !ids.boat_id.is_empty() && (ids.boat_id == ids.intex_id || ids.boat_id == ids.laptop_id) {
+            if ids.boat_id != prev_ids.boat_id {
+                if ids.intex_id == ids.boat_id {
+                    ids.intex_id.clear();
+                }
+                if ids.laptop_id == ids.boat_id {
+                    ids.laptop_id.clear();
+                }
+            } else {
+                ids.boat_id.clear();
+            }
+        }
+
         let (inputs, outputs, _) = list_wasapi_devices();
         let id_to_in: HashMap<&str, &str> =
             inputs.iter().map(|d| (d.id.as_str(), d.name.as_str())).collect();
@@ -1538,6 +1658,14 @@ impl AudioRouterEngine {
         apply_saved_win_vol_for(&self.inner, &ids.intex_id, &explicit.intex_name);
         apply_saved_win_vol_for(&self.inner, &ids.boat_id, &explicit.boat_name);
         apply_saved_win_vol_for(&self.inner, &ids.laptop_id, &explicit.laptop_name);
+
+        let intex_changed_mode = !explicit.intex_name.is_empty()
+            && (prev_names.intex_name.is_empty()
+                || is_wireless_device_name(&explicit.intex_name)
+                    != is_wireless_device_name(&prev_names.intex_name));
+        if intex_changed_mode && explicit.boat_name.is_empty() {
+            sync_delays_for_intex_mode(&self.inner, &explicit.intex_name, &explicit.boat_name);
+        }
 
         *self.inner.selected_names.write() = explicit.clone();
         *self.inner.preferred_names.write() = explicit;
@@ -1665,7 +1793,8 @@ impl AudioRouterEngine {
         self.status_payload()
     }
 
-    /// Measure acoustic BT vs Primary AUX lag differential via default laptop mic using FM chirps.
+    /// Measure acoustic BT vs Wired lag differential via default laptop mic using FM chirps.
+    /// Supports both 4.2 Wireless mode (Intex 3.0 BT vs Laptop) and 3-speaker mode (Extra BT vs Wired Intex).
     pub fn calibrate_sync_delay(&self) -> CalibrationResult {
         ensure_com();
         if !self.is_running() {
@@ -1678,15 +1807,27 @@ impl AudioRouterEngine {
             };
         }
         let ids = self.inner.selected_ids.read().clone();
-        if ids.boat_id.is_empty() || ids.intex_id.is_empty() {
+        let names = self.inner.selected_names.read().clone();
+        let intex_is_bt = !ids.intex_id.is_empty() && is_wireless_device_name(&names.intex_name);
+        let boat_is_bt = !ids.boat_id.is_empty() && is_wireless_device_name(&names.boat_name);
+
+        let (bt_role, wired_role): (u8, u8) = if intex_is_bt && !ids.laptop_id.is_empty() {
+            (1, 3) // 4.2 Wireless BT mode: Intex 3.0 BT vs Laptop Speakers
+        } else if boat_is_bt && !ids.intex_id.is_empty() {
+            (2, 1) // Optional 3rd BT speaker vs Wired Intex AUX
+        } else if !ids.intex_id.is_empty() && !ids.laptop_id.is_empty() {
+            (1, 3) // Generic 4.2 pair (e.g. USB BT dongle without BT in friendly name)
+        } else if !ids.boat_id.is_empty() && !ids.intex_id.is_empty() {
+            (2, 1)
+        } else {
             return CalibrationResult {
                 ok: false,
                 measured_ms: 0.0,
                 confidence: 0.0,
-                message: "Assign both Primary AUX and Center Wireless Bluetooth first".to_string(),
+                message: "Assign both Primary (Bluetooth) and Built-in Speakers first".to_string(),
                 status: self.status_payload(),
             };
-        }
+        };
 
         struct CalGuard<'a>(&'a CalibrationSync);
         impl Drop for CalGuard<'_> {
@@ -1792,6 +1933,8 @@ impl AudioRouterEngine {
         let s1 = w_base + (MASTER_RATE as u64 * 98) / 100; // +980 ms: AUX 1
         let s2 = w_base + (MASTER_RATE as u64 * 175) / 100; // +1750 ms: BT 2
         let s3 = w_base + (MASTER_RATE as u64 * 255) / 100; // +2550 ms: AUX 2
+        self.inner.cal.bt_role.store(bt_role, Ordering::SeqCst);
+        self.inner.cal.wired_role.store(wired_role, Ordering::SeqCst);
         self.inner.cal.s0.store(s0, Ordering::SeqCst);
         self.inner.cal.s1.store(s1, Ordering::SeqCst);
         self.inner.cal.s2.store(s2, Ordering::SeqCst);
@@ -1889,22 +2032,33 @@ impl AudioRouterEngine {
 
         {
             let mut m = self.inner.mixer.write();
-            m.intex_delay_ms = measured_ms;
-            m.laptop_delay_ms = measured_ms;
+            if bt_role == 1 && wired_role == 3 {
+                m.intex_delay_ms = 0.0;
+                m.laptop_delay_ms = measured_ms;
+            } else {
+                m.intex_delay_ms = measured_ms;
+                m.laptop_delay_ms = measured_ms;
+                m.boat_delay_ms = 0.0;
+            }
             m.calibrated_delay_ms = Some(measured_ms);
             *self.inner.fast_params.write() = FastAudioParams::from_mixer(&m);
         }
         Self::save_config_now(&self.inner);
 
         let spread_i = spread.round();
+        let target_label = if bt_role == 1 && wired_role == 3 {
+            "Built-in to Bluetooth"
+        } else {
+            "Wired & Built-in"
+        };
         CalibrationResult {
             ok: true,
             measured_ms,
             confidence: spread_i,
             message: if spread_i < 1.0 {
-                format!("Aligned AUX & Built-in to {measured_ms:.0} ms")
+                format!("Aligned {target_label} at {measured_ms:.0} ms")
             } else {
-                format!("Aligned AUX & Built-in to {measured_ms:.0} ms (±{spread_i:.0} ms)")
+                format!("Aligned {target_label} at {measured_ms:.0} ms (±{spread_i:.0} ms)")
             },
             status: self.status_payload(),
         }
@@ -1990,7 +2144,7 @@ impl AudioRouterEngine {
             m.position_preset.clone(),
             m.master_vol,
             m.master_mute,
-            m.intex_delay_ms,
+            m.intex_delay_ms.max(m.laptop_delay_ms),
             self.inner.running.load(Ordering::SeqCst),
         )
     }
@@ -2566,7 +2720,8 @@ fn is_wireless_device_name(name: &str) -> bool {
     .any(|k| nl.contains(k))
 }
 
-fn open_render_client(dev: &Device) -> Result<(AudioClient, WaveFormat, wasapi::Handle), String> {
+fn open_render_client(dev: &Device) -> Result<(AudioClient, WaveFormat, wasapi::Handle, bool), String> {
+    ensure_session_unity(dev);
     let mut client = dev.get_iaudioclient().map_err(|e| format!("{e}"))?;
     let (def_period, _min_period) = client.get_device_period().unwrap_or((100_000, 100_000));
     let is_bt = dev
@@ -2591,7 +2746,7 @@ fn open_render_client(dev: &Device) -> Result<(AudioClient, WaveFormat, wasapi::
         .is_ok()
     {
         let ev = client.set_get_eventhandle().map_err(|e| format!("{e}"))?;
-        return Ok((client, desired, ev));
+        return Ok((client, desired, ev, is_bt));
     }
 
     // Fallback: device mixformat directly with generous shared buffer slack
@@ -2617,7 +2772,7 @@ fn open_render_client(dev: &Device) -> Result<(AudioClient, WaveFormat, wasapi::
         )
         .map_err(|e| format!("{e}"))?;
     let ev = client.set_get_eventhandle().map_err(|e| format!("{e}"))?;
-    Ok((client, fmt, ev))
+    Ok((client, fmt, ev, is_bt))
 }
 
 fn frames_to_le_bytes(frames: &[[f32; 2]], byte_buf: &mut Vec<u8>) {
@@ -2663,7 +2818,7 @@ fn run_output_loop(inner: Arc<EngineInner>, role: String, initial_id: String) {
         };
 
         match opened {
-            Ok((client, fmt, h_event)) => {
+            Ok((client, fmt, h_event, is_wireless_out)) => {
                 let out_rate = fmt.get_samplespersec();
                 let render_client = match client.get_audiorenderclient() {
                     Ok(rc) => rc,
@@ -2819,10 +2974,12 @@ fn run_output_loop(inner: Arc<EngineInner>, role: String, initial_id: String) {
                     let solo_blocked = params.solo_role != 0 && params.solo_role != role_idx;
 
                     let gr_db = if cal_now {
-                        if role_idx == 3 {
+                        let bt_role = inner.cal.bt_role.load(Ordering::Relaxed);
+                        let wired_role = inner.cal.wired_role.load(Ordering::Relaxed);
+                        if role_idx != bt_role && role_idx != wired_role {
                             block_buf.fill([0.0, 0.0]);
                         } else {
-                            let wins = if role_idx == 2 {
+                            let wins = if role_idx == bt_role {
                                 [
                                     (inner.cal.s0.load(Ordering::Relaxed), &inner.cal.bt1_lag),
                                     (inner.cal.s2.load(Ordering::Relaxed), &inner.cal.bt2_lag),
@@ -2870,6 +3027,7 @@ fn run_output_loop(inner: Arc<EngineInner>, role: String, initial_id: String) {
                         let p = PrimaryParams {
                             master_vol,
                             vol: params.intex_vol,
+                            is_wireless: is_wireless_out,
                             width_pct: params.intex_width,
                             balance: params.intex_balance,
                             bass_db: params.intex_bass_db,
@@ -2885,6 +3043,7 @@ fn run_output_loop(inner: Arc<EngineInner>, role: String, initial_id: String) {
                         let p = AuxParams {
                             master_vol,
                             vol: params.boat_vol,
+                            is_wireless: is_wireless_out,
                             mode: params.boat_mode,
                             hpf_hz: params.boat_hpf_hz,
                             lpf_hz: params.boat_lpf_hz,
@@ -2902,6 +3061,7 @@ fn run_output_loop(inner: Arc<EngineInner>, role: String, initial_id: String) {
                         let p = AuxParams {
                             master_vol,
                             vol: params.laptop_vol,
+                            is_wireless: is_wireless_out,
                             mode: params.laptop_mode,
                             hpf_hz: params.laptop_hpf_hz,
                             lpf_hz: params.laptop_lpf_hz,
@@ -2940,7 +3100,7 @@ fn run_output_loop(inner: Arc<EngineInner>, role: String, initial_id: String) {
 
                     let db = meter_db(&block_buf);
                     set_output_meter(&inner, &role, db);
-                    let actual_ms = ((w_after as f64 - read_pos) * 1000.0 / MASTER_RATE_F64
+                    let actual_ms = ((w_after as f64 - read_start) * 1000.0 / MASTER_RATE_F64
                         - BASE_BUFFER_MS)
                         .max(0.0);
                     set_output_telemetry(
@@ -3129,9 +3289,9 @@ mod tests {
     fn mixer_patch_clamps_bounds_and_enforces_protection_cap() {
         let mut m = MixerState::default();
         assert_eq!(m.protection_max_master, 60.0);
-        assert_eq!(m.protection_ceiling_db, -6.0);
-        assert_eq!(m.intex_delay_ms, 224.0);
-        assert_eq!(m.laptop_delay_ms, 224.0);
+        assert_eq!(m.protection_ceiling_db, -3.0);
+        assert_eq!(m.intex_delay_ms, 0.0);
+        assert_eq!(m.laptop_delay_ms, 0.0);
 
         m.apply_patch(&MixerPatch {
             master_vol: Some(999.0),
@@ -3158,10 +3318,44 @@ mod tests {
 
         let music = preset_patch("wide_room").expect("wide_room preset missing");
         m.apply_patch(&music);
-        assert_eq!(m.protection_ceiling_db, -6.0);
+        assert_eq!(m.protection_ceiling_db, -3.0);
         assert_eq!(m.position_preset, "wide_room");
-        assert_eq!(m.boat_hpf_hz, 185.0);
-        assert_eq!(m.laptop_treble_db, 2.0);
+        assert_eq!(m.intex_vol, 115.0);
+        assert_eq!(m.laptop_hpf_hz, 190.0);
+        assert_eq!(m.laptop_treble_db, 2.5);
+    }
+
+    #[test]
+    fn legacy_duplicate_config_migrates_bt_to_primary_42() {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let cfg = std::env::temp_dir().join(format!("phasemix_mig_test_{stamp}.json"));
+        fs::write(
+            &cfg,
+            r#"{
+              "mixer": {"master_vol": 20, "intex_delay_ms": 224, "laptop_delay_ms": 224},
+              "devices": {
+                "intex_name": "Speakers (Realtek(R) Audio)",
+                "boat_name": "Headphones (3.0 BT)",
+                "laptop_name": "Speakers (Realtek(R) Audio)"
+              }
+            }"#,
+        )
+        .unwrap();
+
+        let eng = AudioRouterEngine::new(cfg.clone());
+        let pref = eng.inner.preferred_names.read().clone();
+        assert_eq!(pref.intex_name, "Headphones (3.0 BT)");
+        assert_eq!(pref.boat_name, "");
+        assert_eq!(pref.laptop_name, "Speakers (Realtek(R) Audio)");
+        let st = eng.status_payload();
+        assert_eq!(st.mixer.intex_delay_ms, 0.0);
+        assert_eq!(st.mixer.laptop_delay_ms, 224.0);
+
+        let _ = fs::remove_file(&cfg);
+        let _ = fs::remove_file(AudioRouterEngine::backup_path(&cfg));
     }
 
     #[test]
@@ -3356,7 +3550,7 @@ mod tests {
 
         let factory = eng.reset_factory();
         assert_eq!(factory.mixer.master_vol, 25.0);
-        assert_eq!(factory.mixer.intex_delay_ms, 224.0);
+        assert_eq!(factory.mixer.intex_delay_ms, 0.0);
         assert_eq!(factory.mixer.position_preset, "desk_triangle");
         assert_eq!(factory.mixer.calibrated_delay_ms, None);
 

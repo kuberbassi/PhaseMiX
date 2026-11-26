@@ -62,12 +62,12 @@ export const SystemProtectionDrawer = memo(function SystemProtectionDrawer({
   const activeTest = mixer.test_mode !== "off";
 
   return (
-    <div className="rounded-b-2xl border-t border-white/[0.06] bg-[#16181d] px-4 py-4">
-      <div className="grid grid-cols-1 gap-3.5 md:grid-cols-12">
+    <div className="@container rounded-b-2xl border-t border-white/[0.06] bg-[#16181d] px-3.5 py-4 sm:px-4">
+      <div className="grid grid-cols-1 gap-3.5 @[740px]:grid-cols-12">
         {/* LEFT CARD: EAR-SAFE PROTECTION & SYSTEM CONTROLS */}
-        <div className="flex flex-col justify-between gap-3 rounded-xl border border-white/[0.05] bg-[#121317] p-3.5 md:col-span-6">
+        <div className="@container flex min-w-0 flex-col justify-between gap-3 overflow-hidden rounded-xl border border-white/[0.05] bg-[#121317] p-3.5 @[740px]:col-span-6">
           <div className="flex items-start justify-between gap-2">
-            <div>
+            <div className="min-w-0">
               <div className="text-xs font-semibold text-zinc-200">Ear-Safe Protection</div>
               <div className="mt-0.5 text-[11px] text-zinc-500">
                 Master volume cap &amp; transparent transient ceiling.
@@ -86,7 +86,7 @@ export const SystemProtectionDrawer = memo(function SystemProtectionDrawer({
             </span>
           </div>
 
-          <div className="grid grid-cols-2 items-center gap-3 rounded-xl border border-white/[0.04] bg-[#16181e]/75 px-3 py-3">
+          <div className="grid grid-cols-2 items-center gap-2 rounded-xl border border-white/[0.04] bg-[#16181e]/75 px-2.5 py-3">
             <div className="flex flex-col items-center gap-1.5">
               <CometDial
                 value={mixer.protection_max_master}
@@ -95,7 +95,7 @@ export const SystemProtectionDrawer = memo(function SystemProtectionDrawer({
                 step={5}
                 unit="%"
                 label="Max Master Cap"
-                size={90}
+                size={82}
                 thickness={7}
                 speed={45}
                 cometReach={100}
@@ -105,11 +105,11 @@ export const SystemProtectionDrawer = memo(function SystemProtectionDrawer({
                 onChange={(v) => onPatch({ protection_max_master: v })}
               />
               <div className="text-center">
-                <div className="text-[11px] font-medium text-zinc-200 leading-tight">Max Master Cap</div>
-                <div className="text-[10px] text-zinc-500 leading-tight">Hard ceiling</div>
+                <div className="text-[11px] font-medium leading-tight text-zinc-200">Max Master Cap</div>
+                <div className="text-[10px] leading-tight text-zinc-500">Hard ceiling</div>
               </div>
             </div>
-            <div className="flex flex-col items-center gap-1.5 border-l border-white/[0.05] pl-3">
+            <div className="flex flex-col items-center gap-1.5 border-l border-white/[0.05] pl-2">
               <CometDial
                 value={mixer.protection_ceiling_db}
                 min={-24}
@@ -117,7 +117,7 @@ export const SystemProtectionDrawer = memo(function SystemProtectionDrawer({
                 step={1}
                 unit="dB"
                 label="Peak Limiter Ceiling"
-                size={90}
+                size={82}
                 thickness={7}
                 speed={45}
                 cometReach={100}
@@ -127,19 +127,19 @@ export const SystemProtectionDrawer = memo(function SystemProtectionDrawer({
                 onChange={(v) => onPatch({ protection_ceiling_db: v })}
               />
               <div className="text-center">
-                <div className="text-[11px] font-medium text-zinc-200 leading-tight">Spike Ceiling</div>
-                <div className="text-[10px] text-zinc-500 leading-tight">Hold limiter</div>
+                <div className="text-[11px] font-medium leading-tight text-zinc-200">Spike Ceiling</div>
+                <div className="text-[10px] leading-tight text-zinc-500">Hold limiter</div>
               </div>
             </div>
           </div>
 
-          <div className="grid grid-cols-3 gap-2">
-            <div className="flex items-center justify-between gap-2 rounded-lg border border-white/[0.05] bg-[#16181e] px-2.5 py-2">
-              <span className="text-[11px] font-medium text-zinc-300 truncate">Ear-Safe</span>
+          <div className="grid grid-cols-1 gap-2 @[320px]:grid-cols-3">
+            <div className="flex items-center justify-between gap-1.5 rounded-lg border border-white/[0.05] bg-[#16181e] px-2 py-2">
+              <span className="truncate text-[11px] font-medium text-zinc-300">Ear-Safe</span>
               <SquishSwitch
                 checked={mixer.protection_enabled}
-                width={36}
-                height={20}
+                width={34}
+                height={19}
                 trackColor="#2e3139"
                 trackOnColor="#22c55e"
                 onChange={(c) => onPatch({ protection_enabled: c })}
@@ -153,12 +153,12 @@ export const SystemProtectionDrawer = memo(function SystemProtectionDrawer({
               inkColor="#f4f5f7"
               size="sm"
             >
-              <div className="flex w-full items-center justify-between gap-2 rounded-lg border border-white/[0.05] bg-[#16181e] px-2.5 py-2">
-                <span className="text-[11px] font-medium text-zinc-300 truncate">Tray Boot</span>
+              <div className="flex w-full items-center justify-between gap-1.5 rounded-lg border border-white/[0.05] bg-[#16181e] px-2 py-2">
+                <span className="truncate text-[11px] font-medium text-zinc-300">Tray Boot</span>
                 <SquishSwitch
                   checked={autostart}
-                  width={36}
-                  height={20}
+                  width={34}
+                  height={19}
                   trackColor="#2e3139"
                   trackOnColor="#22c55e"
                   onChange={onToggleAutostart}
@@ -166,12 +166,12 @@ export const SystemProtectionDrawer = memo(function SystemProtectionDrawer({
               </div>
             </WarmTooltip>
 
-            <div className="flex items-center justify-between gap-2 rounded-lg border border-white/[0.05] bg-[#16181e] px-2.5 py-2">
-              <span className="text-[11px] font-medium text-zinc-300 truncate">Mute All</span>
+            <div className="flex items-center justify-between gap-1.5 rounded-lg border border-white/[0.05] bg-[#16181e] px-2 py-2">
+              <span className="truncate text-[11px] font-medium text-zinc-300">Mute All</span>
               <SquishSwitch
                 checked={mixer.master_mute}
-                width={36}
-                height={20}
+                width={34}
+                height={19}
                 trackColor="#2e3139"
                 trackOnColor="#ef4444"
                 onChange={(c) => onPatch({ master_mute: c })}
@@ -181,12 +181,12 @@ export const SystemProtectionDrawer = memo(function SystemProtectionDrawer({
         </div>
 
         {/* RIGHT CARD: SYNC & LATENCY CHECK */}
-        <div className="flex flex-col justify-between gap-3 rounded-xl border border-white/[0.05] bg-[#121317] p-3.5 md:col-span-6">
+        <div className="flex min-w-0 flex-col justify-between gap-3 overflow-hidden rounded-xl border border-white/[0.05] bg-[#121317] p-3.5 @[740px]:col-span-6">
           <div className="flex items-start justify-between gap-2">
-            <div>
+            <div className="min-w-0">
               <div className="text-xs font-semibold text-zinc-200">Sync &amp; Latency Check</div>
               <div className="mt-0.5 text-[11px] text-zinc-500">
-                Measure Bluetooth vs wired delay via mic, or tune by ear.
+                Measure Bluetooth vs Built-in delay via mic, or tune by ear.
               </div>
             </div>
             {(calStatus || mixer.calibrated_delay_ms != null) && (
@@ -211,7 +211,7 @@ export const SystemProtectionDrawer = memo(function SystemProtectionDrawer({
           <div className="flex flex-col gap-2 rounded-xl border border-white/[0.04] bg-[#16181e]/75 p-2.5">
             <WarmTooltip
               className="w-full"
-              content="Plays short BT & AUX frequency chirps and locks AUX / Built-in delay automatically"
+              content="Plays short Bluetooth & Built-in frequency chirps and aligns delay automatically"
               surfaceColor="#242730"
               inkColor="#f4f5f7"
               size="sm"
@@ -227,7 +227,7 @@ export const SystemProtectionDrawer = memo(function SystemProtectionDrawer({
                 }`}
               >
                 <Microphone size={14} weight={calibrating ? "fill" : "regular"} />
-                {calibrating ? "Measuring BT vs AUX (3 s)..." : "Auto-Align Delay via Mic"}
+                {calibrating ? "Measuring BT vs Laptop (3 s)..." : "Auto-Align Delay via Mic"}
               </button>
             </WarmTooltip>
 
@@ -258,8 +258,8 @@ export const SystemProtectionDrawer = memo(function SystemProtectionDrawer({
 
             <div className="grid grid-cols-2 gap-2">
               {[
-                { id: "click", label: "Sync Click", tip: "Play crisp 2-ms impulse click across all 3 outputs to dial out delay", icon: <Metronome size={14} /> },
-                { id: "chirp", label: "Bass + Vocal", tip: "Sweep punchy sub-bass and spoken midrange across speakers", icon: <Waveform size={14} /> },
+                { id: "click", label: "Sync Click", tip: "Play crisp 2-ms impulse click across active speakers to dial out delay", icon: <Metronome size={14} /> },
+                { id: "chirp", label: "Bass + Vocal", tip: "Sweep punchy sub-bass and spoken midrange across 4.2 speakers", icon: <Waveform size={14} /> },
                 { id: "lr", label: "L / C / R", tip: "Alternating stereo cue to verify left, center, and right imaging", icon: <ArrowsLeftRight size={14} /> },
                 { id: "off", label: "Stop Test", tip: "Stop active test signal and return to live audio", icon: <Stop size={14} /> },
               ].map((btn) => {
@@ -352,7 +352,7 @@ export const SystemProtectionDrawer = memo(function SystemProtectionDrawer({
           </WarmTooltip>
 
           <WarmTooltip
-            content="Restore factory defaults (224 ms sync, Desk Triangle, Ear-Safe on)"
+            content="Restore factory 4.2 defaults (Desk 4.2 Full Range, Ear-Safe on)"
             surfaceColor="#242730"
             inkColor="#f4f5f7"
             size="sm"

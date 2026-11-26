@@ -9,9 +9,11 @@ import type { Role } from "@/types/mixer";
 export const LiveLedMeter = memo(function LiveLedMeter({
   channel,
   muted = false,
+  isWireless = false,
 }: {
   channel: "in" | "master" | Role;
   muted?: boolean;
+  isWireless?: boolean;
 }) {
   const db = useTelemetrySlice((s) =>
     channel === "master"
@@ -22,7 +24,7 @@ export const LiveLedMeter = memo(function LiveLedMeter({
   const masterMuted = useTelemetrySlice((s) => s.master_mute);
   const isOut = channel !== "in";
   const effectiveMuted = muted || (isOut && masterMuted);
-  const level = dbToVisualNorm(db, masterVol, isOut, effectiveMuted);
+  const level = dbToVisualNorm(db, masterVol, isOut, effectiveMuted, isWireless);
   return <LedMeter db={db} level={level} muted={effectiveMuted} segments={10} />;
 });
 
@@ -143,7 +145,11 @@ export const LiveProtectionSummary = memo(function LiveProtectionSummary({
   );
 });
 
-export const LiveTelemetryFooter = memo(function LiveTelemetryFooter() {
+export const LiveTelemetryFooter = memo(function LiveTelemetryFooter({
+  showThirdSpeaker = false,
+}: {
+  showThirdSpeaker?: boolean;
+}) {
   const tel = useTelemetrySlice((s) => s.telemetry);
   return (
     <footer className="mt-3 flex flex-wrap items-center justify-between gap-2 px-1 font-mono text-[10.5px] text-zinc-500 tabular-nums">
@@ -152,7 +158,7 @@ export const LiveTelemetryFooter = memo(function LiveTelemetryFooter() {
       </span>
       <span className="flex flex-wrap gap-3">
         <span>Primary: {tel.intex_actual_ms.toFixed(0)} ms</span>
-        <span>Center: {tel.boat_actual_ms.toFixed(0)} ms</span>
+        {showThirdSpeaker && <span>Aux: {tel.boat_actual_ms.toFixed(0)} ms</span>}
         <span>Built-in: {tel.laptop_actual_ms.toFixed(0)} ms</span>
       </span>
     </footer>

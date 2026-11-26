@@ -87,8 +87,8 @@ export function LedEqColumn({ label, db, min = -12, max = 12 }: LedEqColumnProps
   const activeIdx = Math.round(pct * (dots - 1));
 
   return (
-    <div className="flex w-11 shrink-0 flex-col items-center gap-1.5">
-      <div className="flex flex-col-reverse items-center gap-1 rounded-full border border-white/[0.05] bg-[#14161a] px-1.5 py-2">
+    <div className="flex w-9 shrink-0 flex-col items-center gap-1.5">
+      <div className="flex flex-col-reverse items-center gap-[3px] rounded-full border border-white/[0.05] bg-[#14161a] px-1.5 py-1.5">
         {Array.from({ length: dots }, (_, i) => {
           const isThumb = i === activeIdx;
           const isLit = i <= activeIdx;
@@ -101,7 +101,7 @@ export function LedEqColumn({ label, db, min = -12, max = 12 }: LedEqColumnProps
               key={i}
               className={`block rounded-full transition-all duration-150 ${
                 isThumb
-                  ? "h-2.5 w-2.5 bg-white ring-2 ring-white/30 shadow"
+                  ? "h-2 w-2 bg-white ring-2 ring-white/30 shadow"
                   : isLit
                     ? `h-1 w-1 ${dotColor}`
                     : "h-1 w-1 bg-white/15"
@@ -110,7 +110,7 @@ export function LedEqColumn({ label, db, min = -12, max = 12 }: LedEqColumnProps
           );
         })}
       </div>
-      <span className="w-full whitespace-nowrap text-center font-mono text-[10px] leading-none text-zinc-400">
+      <span className="w-full whitespace-nowrap text-center font-mono text-[9.5px] leading-none text-zinc-400">
         {label}
       </span>
     </div>
